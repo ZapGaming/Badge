@@ -1,23 +1,9 @@
 <svg width="600" height="150" viewBox="0 0 600 150" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <filter id="frosted-glass">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur"/>
-      <feFlood flood-color="#FFFFFF" flood-opacity="0.6" result="overlay"/>
-      <feBlend in="blur" in2="overlay" mode="screen"/>
-    </filter>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur"/>
+      </filter>
     
-    <linearGradient id="AnimatedGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#007AFF; stop-opacity:1">
-        <animate attributeName="offset" values="0;1;0" dur="10s" repeatCount="indefinite"/>
-      </stop>
-      <stop offset="50%" style="stop-color:#FF375F; stop-opacity:1">
-        <animate attributeName="offset" values="0.5;0;0.5" dur="10s" repeatCount="indefinite"/>
-      </stop>
-      <stop offset="100%" style="stop-color:#32D74B; stop-opacity:1">
-        <animate attributeName="offset" values="1;0.5;1" dur="10s" repeatCount="indefinite"/>
-      </stop>
-    </linearGradient>
-
     <linearGradient id="NameGradient" x1="0%" y1="0%" x2="100%" y2="0%">
       <stop offset="0%" style="stop-color:#0078D4; stop-opacity:1" />
       <stop offset="100%" style="stop-color:#00B7C3; stop-opacity:1" />
@@ -26,11 +12,13 @@
 
   <rect width="600" height="150" rx="15" fill="#1C1C1E"/> 
   
-  <g id="AnimatedBG">
-    <rect x="0" y="0" width="600" height="150" fill="url(#AnimatedGradient)"/>
-    <rect x="0" y="0" width="600" height="150" rx="15" fill="#FFFFFF" opacity="0.05"/>
+  <g id="VibrantBackground" opacity="0.6">
+    <ellipse cx="60" cy="140" rx="90" ry="70" fill="#0078D4" transform="rotate(-10 60 140)"/>
+    <rect x="350" y="10" width="200" height="100" fill="#7CBB00" transform="rotate(15 350 10)"/>
+    <ellipse cx="550" cy="50" rx="60" ry="90" fill="#FF8C00" transform="rotate(45 550 50)"/>
+    <rect x="0" y="0" width="600" height="150" rx="15" fill="#FFFFFF" opacity="0.1"/>
   </g>
-  <rect x="15" y="15" width="570" height="120" rx="10" fill="#FFFFFF" opacity="0.95" style="filter:url(#frosted-glass);"/>
+  <rect x="15" y="15" width="570" height="120" rx="10" fill="#FFFFFF" opacity="0.9" style="filter:url(#frosted-glass);"/>
   
   <style>
     /* Clean, modern left-aligned typography */
@@ -50,8 +38,8 @@
       <rect x="25" y="25" width="22" height="22" fill="#F25022" rx="3"/>
     </g>
 
-    <g transform="translate(75, 0)"> 
-      <text x="0" y="0" class="name">Lynn Yang Mullins</text>
+    <g transform="translate(85, 0)"> 
+      <text x="250" y="25" class="name">Lynn Yang Mullins</text>
       
       <text x="0" y="25" class="role">Role / Title</text>
 
