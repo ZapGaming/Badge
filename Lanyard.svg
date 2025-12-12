@@ -1,0 +1,109 @@
+<svg width="410" height="135" viewBox="0 0 410 135" 
+     xmlns="http://www.w3.org/2000/svg" 
+     xmlns:xlink="http://www.w3.org/1999/xlink">
+
+  <defs>
+    <style>
+      /* --- ANIMATIONS --- */
+      @keyframes borderRotate {
+        0% { stroke: #5865F2; } 50% { stroke: #FF4B4B; } 100% { stroke: #5865F2; }
+      }
+      
+      @keyframes bgShift {
+        0% { transform: translateX(0px); } 50% { transform: translateX(-20px); } 100% { transform: translateX(0px); }
+      }
+
+      @keyframes scanline {
+        0% { transform: translateY(0); opacity: 0.1; }
+        100% { transform: translateY(135px); opacity: 0; }
+      }
+
+      @keyframes pulseHolo {
+        0% { opacity: 0.3; } 50% { opacity: 0.6; } 100% { opacity: 0.3; }
+      }
+
+      /* --- CLASS APPLIERS --- */
+      .neon-border {
+        animation: borderRotate 4s infinite alternate;
+        fill: none;
+        stroke-width: 2;
+        rx: 15;
+      }
+      
+      .bg-texture {
+        animation: bgShift 10s ease-in-out infinite;
+      }
+      
+      .scan-bar {
+        animation: scanline 4s linear infinite;
+        fill: white;
+      }
+    </style>
+
+    <!-- HOLOGRAPHIC SCANLINE PATTERN -->
+    <pattern id="holo-lines" width="4" height="4" patternUnits="userSpaceOnUse">
+      <path d="M0 2L4 2" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+    </pattern>
+
+    <!-- MASK TO CLIP CONTENT -->
+    <clipPath id="cardMask">
+      <rect width="406" height="131" rx="15" />
+    </clipPath>
+
+    <!-- COMPLEX LIQUID GRADIENT -->
+    <linearGradient id="liquidGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090912" />
+      <stop offset="50%" stop-color="#150a1a" />
+      <stop offset="100%" stop-color="#0a0a20" />
+    </linearGradient>
+    
+    <!-- FLUID FILTER -->
+    <filter id="distort">
+      <feTurbulence type="turbulence" baseFrequency="0.015" numOctaves="2" seed="5">
+        <animate attributeName="baseFrequency" values="0.015;0.02;0.015" dur="10s" repeatCount="indefinite" />
+      </feTurbulence>
+      <feDisplacementMap in="SourceGraphic" scale="20" />
+    </filter>
+  </defs>
+
+  <!-- ================= BACKGROUND LAYERS ================= -->
+  
+  <!-- 1. Base Container & Shadow -->
+  <rect x="2" y="2" width="406" height="131" rx="15" fill="url(#liquidGrad)" stroke="#000" stroke-width="3" filter="drop-shadow(0 0 10px rgba(88,101,242,0.4))"/>
+
+  <!-- 2. Animated Fluid Orbs (Under the Lanyard Card) -->
+  <g clip-path="url(#cardMask)" opacity="0.5">
+    <circle cx="50" cy="50" r="100" fill="#5865F2" filter="url(#distort)" class="bg-texture"/>
+    <circle cx="350" cy="80" r="120" fill="#FF4B4B" filter="url(#distort)" style="mix-blend-mode: screen"/>
+  </g>
+
+  <!-- ================= THE CORE: EMBEDDED LANYARD ================= -->
+  <!-- 
+       Crucial: We ask Lanyard for a 'transparent' background 
+       so our animated SVG background shows through the gaps.
+  -->
+  <g transform="translate(5, 7)">
+      <!-- REPLACE 'YOUR_DISCORD_ID_HERE' WITH NUMERIC ID -->
+      <image width="400" height="125" 
+             xlink:href="https://lanyard.cnrad.dev/api/1173155162093785099?bg=transparent&amp;hideTimestamp=true&amp;borderRadius=10" />
+  </g>
+
+  <!-- ================= FOREGROUND EFFECTS ================= -->
+
+  <!-- 3. Grid Overlay (Scanlines) -->
+  <rect x="2" y="2" width="406" height="131" rx="15" fill="url(#holo-lines)" pointer-events="none" />
+
+  <!-- 4. Moving Scanner Bar -->
+  <rect x="2" y="2" width="406" height="5" opacity="0.1" class="scan-bar" pointer-events="none" />
+
+  <!-- 5. Glossy Shine Top Half -->
+  <path d="M 2 2 H 408 A 15 15 0 0 1 408 17 V 65 C 408 65 200 40 2 65 V 17 A 15 15 0 0 1 2 2 Z" fill="white" opacity="0.03" pointer-events="none"/>
+
+  <!-- 6. RGB Animated Border -->
+  <rect x="2" y="2" width="406" height="131" class="neon-border" pointer-events="none"/>
+
+  <!-- 7. Corner Accents -->
+  <path d="M 15 2 L 2 2 L 2 15" stroke="white" fill="none" stroke-width="2" opacity="0.5" />
+  <path d="M 395 133 L 408 133 L 408 120" stroke="white" fill="none" stroke-width="2" opacity="0.5" />
+
+</svg>
