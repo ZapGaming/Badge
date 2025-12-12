@@ -4,7 +4,7 @@ import os
 import datetime
 import html
 import google.generativeai as genai
-from flask import Flask, Response
+from flask import Flask, Response, request
 
 app = Flask(__name__)
 
@@ -13,7 +13,7 @@ GOOGLE_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GOOGLE_API_KEY:
     genai.configure(api_key=GOOGLE_API_KEY)
 
-HEADERS = {'User-Agent': 'HyperBadge/v4.0'}
+HEADERS = {'User-Agent': 'HyperBadge/v5.0-Custom'}
 
 # 1x1 Transparent Fallback
 EMPTY_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
@@ -29,24 +29,27 @@ def get_base64(url):
     return EMPTY_IMG
 
 # --- INTELLIGENT AI CORE ---
-def consult_gemini(status_text, user_name, is_music):
+def consult_gemini(status_text, user_name, custom_idle=None):
     if not GOOGLE_API_KEY: 
         return "AI_MOD :: INITIALIZATION_FAILED"
 
     try:
         model = genai.GenerativeModel('gemini-pro')
         
-        # Context-Aware Prompt
-        context = "LISTENING TO MUSIC" if is_music else "GENERAL ACTIVITY"
-        
+        # Adjust prompt context if using a custom idle message
+        context = "User is ACTIVE"
+        if custom_idle and status_text == custom_idle:
+            context = "User is IDLE/CHILLING"
+
         prompt = f"""
-        Role: Sci-Fi System OS.
-        Target: '{user_name}' is currently {context}: "{status_text}".
+        Role: Sci-Fi System OS (JARVIS/Cortana).
+        Target: '{user_name}'
+        Activity: "{status_text}" ({context}).
         
         Task: Write a 1-line uppercase status report. Max 6 words.
-        - If Music: Mention frequency analysis, audio streams, or vibes.
-        - If Coding: Mention compilation or syntax.
-        - If Generic: Mention biometrics.
+        - If playing music: Comment on audio freq or vibes.
+        - If idle/sleeping (status is "{status_text}"): "HIBERNATION MODE ACTIVE" or similar.
+        - If coding: "COMPILING NEURAL SHARDS".
         
         Output: ONLY the status text.
         """
@@ -57,8 +60,8 @@ def consult_gemini(status_text, user_name, is_music):
     except:
         return "DATA STREAM ENCRYPTED"
 
-# --- DATA LAYER (LANYARD + SPOTIFY) ---
-def get_user_data(user_id):
+# --- DATA LAYER (LANYARD + SPOTIFY + CUSTOM ARGS) ---
+def get_user_data(user_id, args):
     try:
         r = requests.get(f"https://api.lanyard.rest/v1/users/{user_id}", headers=HEADERS, timeout=4)
         data = r.json()
@@ -70,70 +73,93 @@ def get_user_data(user_id):
         u = d['discord_user']
         status = d['discord_status']
         
-        # --- LOGIC VARIABLES ---
-        # Defaults
-        display_color = "#7a7a7a"
-        line_1 = f"STATUS: {status.upper()}"
-        line_2 = "NO SIGNAL"
+        # --- CUSTOMIZATION PARAMS ---
+        # 1. Display Name vs Username
+        show_display = args.get('showDisplayName', 'true').lower() == 'true'
+        if show_display and u.get('global_name'):
+            display_name = u['global_name']
+            # Optional: Add username as subtext if needed, but for design we stick to one main name
+        else:
+            display_name = u['username']
+
+        # 2. Idle Message
+        forced_idle_msg = args.get('idleMessage', 'SYSTEM STANDBY')
+
+        # --- LOGIC ---
+        line_1 = ""
+        line_2 = ""
         is_music = False
         
-        # Color Map
         colors = {
             "online": "#00ffb3", 
             "idle": "#ffbb00",   
             "dnd": "#ff2a6d",    
             "offline": "#555555",
-            "spotify": "#1DB954" # Special Spotify Color
+            "spotify": "#1DB954" 
         }
         
-        # 1. CHECK SPOTIFY PRIORITY
+        # 1. SPOTIFY CHECK
         if d.get('spotify'):
             spot = d['spotify']
             song = spot['song']
             artist = spot['artist']
             
-            # Smart Truncate
-            if len(song) > 20: song = song[:18] + ".."
+            if len(song) > 18: song = song[:16] + ".."
             
             line_1 = f"🎵 {html.escape(song)}"
             line_2 = f"BY: {html.escape(artist)}"
             display_color = colors['spotify']
             is_music = True
             
-        # 2. CHECK OTHER ACTIVITIES (If no Spotify)
+        # 2. OTHER ACTIVITIES
         else:
-            display_color = colors.get(status, "#555")
-            
-            # Find Game or Custom Status
             found_act = False
             for act in d.get('activities', []):
                 if act['type'] == 0: # Game
                     line_1 = "RUNNING_EXE:"
                     line_2 = html.escape(act['name'])
-                    found_act = True
-                    break
-                if act['type'] == 4: # Custom Status
+                    found_act = True; break
+                if act['type'] == 4: # Status Msg
                     state = act.get('state', '')
-                    if state:
-                        line_1 = "USER NOTE:"
-                        line_2 = html.escape(state)
-                        found_act = True
-                        break
-            
+                    emoji = act.get('emoji', {}).get('name', '')
+                    content = f"{emoji} {state}".strip()
+                    if content:
+                        line_1 = "USER STATUS:"
+                        line_2 = html.escape(content)
+                        found_act = True; break
+                if act['type'] == 2: # Listening
+                    line_1 = "MEDIA:"
+                    line_2 = "AUDIO STREAM"
+                    found_act = True; break
+
+            # 3. IDLE/OFFLINE FALLBACK (Uses custom message)
             if not found_act:
-                # Basic Fallback
-                line_1 = f"SYSTEM IS {status.upper()}"
-                line_2 = "WAITING FOR INPUT..."
+                # If online but doing nothing, OR offline/idle
+                if status == "online":
+                    line_1 = "SYSTEM ONLINE"
+                    line_2 = "AWAITING INPUT"
+                else:
+                    line_1 = "CURRENT STATE:"
+                    line_2 = html.escape(forced_idle_msg).upper()
+            
+            display_color = colors.get(status, "#555")
+
+        # Sanitize length
+        if len(line_2) > 25: line_2 = line_2[:23] + ".."
 
         return {
             "valid": True,
             "id": u['id'],
-            "name": html.escape(u['username'].upper()),
+            "name": html.escape(display_name.upper()),
             "status_color": display_color,
             "line_1": line_1,
             "line_2": line_2,
             "is_music": is_music,
-            "avatar": get_base64(f"https://cdn.discordapp.com/avatars/{u['id']}/{u['avatar']}.png")
+            "avatar": get_base64(f"https://cdn.discordapp.com/avatars/{u['id']}/{u['avatar']}.png"),
+            "style_settings": {
+                "bg": args.get('bg', '09090b'),
+                "radius": args.get('borderRadius', '20')
+            }
         }
     except Exception as e:
         print(e)
@@ -141,11 +167,22 @@ def get_user_data(user_id):
     
     return { 
         "valid": False, "status_color": "#ff0000", "name": "ERR_404", 
-        "line_1": "CONNECTION LOST", "line_2": "RETRYING...", "id": "0000", "avatar": EMPTY_IMG, "is_music": False
+        "line_1": "ERROR", "line_2": "CHECK API/USERID", "id": "0000", "avatar": EMPTY_IMG,
+        "style_settings": { "bg": "000000", "radius": "20" }
     }
 
 # --- RENDER ENGINE ---
 def generate_hyper_svg(data, ai_msg):
+    settings = data.get('style_settings', {})
+    
+    # Process CSS Args
+    bg_color = settings['bg']
+    if not bg_color.startswith('#'): bg_color = f"#{bg_color}"
+    
+    radius = settings['radius']
+    if "px" in radius: radius = radius.replace("px", "") # safety clean
+
+    # Hexagon Math
     hex_path = "M50 0 L93.3 25 V75 L50 100 L6.7 75 V25 Z"
 
     svg = f"""<svg width="480" height="160" viewBox="0 0 480 160" 
@@ -162,104 +199,119 @@ def generate_hyper_svg(data, ai_msg):
       .font-tech {{ font-family: 'JetBrains Mono', monospace; }}
       .font-ui {{ font-family: 'Rajdhani', sans-serif; }}
 
-      /* PARALLAX ANIMATION */
+      /* === ANIMATIONS === */
       .anim-float {{ animation: floatY 6s ease-in-out infinite; }}
-      @keyframes floatY {{ 0%, 100% {{ transform: translateY(0px); }} 50% {{ transform: translateY(-3px); }} }}
+      @keyframes floatY {{ 0%, 100% {{ transform: translateY(0px); }} 50% {{ transform: translateY(-4px); }} }}
 
-      /* BACKGROUND DRIFT */
-      .bg-drift {{ animation: rotate 20s infinite linear; transform-origin: center; }}
-      @keyframes rotate {{ from {{ transform: rotate(0deg) scale(1.1); }} to {{ transform: rotate(360deg) scale(1.1); }} }}
-      
       .pulse-text {{ animation: opacityPulse 2s infinite; }}
       @keyframes opacityPulse {{ 0% {{ opacity: 1; }} 50% {{ opacity: 0.5; }} 100% {{ opacity: 1; }} }}
+      
+      /* New Drift Animation for Frosted Glass Blob */
+      .blob-drift {{ animation: rotateBlob 30s linear infinite; transform-origin: 240px 80px; }}
+      @keyframes rotateBlob {{ from {{ transform: rotate(0deg); }} to {{ transform: rotate(360deg); }} }}
     </style>
 
     <clipPath id="hexClip"><path d="{hex_path}" /></clipPath>
-    <clipPath id="cardClip"><rect width="480" height="160" rx="20" /></clipPath>
+    
+    <!-- User-Defined Border Radius Clip -->
+    <clipPath id="cardClip"><rect width="480" height="160" rx="{radius}" /></clipPath>
 
-    <!-- FROST SHADOW -->
+    <!-- FROST EFFECTS -->
     <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feGaussianBlur stdDeviation="8" result="blur" />
       <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+    
+    <!-- Text Depth -->
+    <filter id="textDrop">
+        <feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.5"/>
     </filter>
   </defs>
 
-  <!-- === BACKGROUND === -->
-  <rect width="100%" height="100%" rx="20" fill="#09090b" />
+  <!-- === DYNAMIC BACKGROUND === -->
+  <!-- User Defined BG Color -->
+  <rect width="100%" height="100%" rx="{radius}" fill="{bg_color}" />
 
+  <!-- Animated Nebula inside the card area -->
   <g clip-path="url(#cardClip)">
-    <g class="bg-drift" opacity="0.3">
-        <!-- Main blob changes color based on Activity/Spotify -->
-        <circle cx="50" cy="50" r="160" fill="{data['status_color']}" filter="url(#softGlow)" />
-        <circle cx="450" cy="160" r="140" fill="#5865F2" filter="url(#softGlow)" />
+    <rect width="100%" height="100%" fill="transparent" />
+    
+    <g class="blob-drift" opacity="0.4">
+        <!-- Accent Blob -->
+        <circle cx="50" cy="50" r="180" fill="{data['status_color']}" filter="url(#softGlow)" />
+        <!-- Secondary Chill Blob (Blurple) -->
+        <circle cx="450" cy="160" r="150" fill="#5865F2" filter="url(#softGlow)" />
     </g>
-    <!-- Texture Overlay -->
-    <rect width="100%" height="100%" fill="url(#noisePattern)" /> <!-- pattern ref omitted for brevity, renders transparently -->
+    
+    <!-- Noise & Shine Overlay -->
     <rect width="100%" height="100%" fill="rgba(255,255,255,0.02)" />
+    <!-- Diagonal Glass Shine -->
+    <path d="M0 0 L480 0 L0 160 Z" fill="url(#whiteGradient)" opacity="0.05" />
   </g>
 
-  <!-- === FLOATING UI === -->
+  <!-- === FLOATING CONTENT === -->
 
-  <!-- 1. HEXAGON AVATAR -->
+  <!-- 1. HEX AVATAR -->
   <g transform="translate(25, 30)">
-      <!-- Glow Underlay -->
-      <path d="{hex_path}" fill="{data['status_color']}" opacity="0.2" filter="url(#softGlow)" transform="scale(1.05) translate(-2.5,-2.5)" />
-      
-      <!-- Image & Border -->
+      <!-- Glow -->
+      <path d="{hex_path}" fill="{data['status_color']}" opacity="0.25" filter="url(#softGlow)" transform="translate(0, 2)" />
+      <!-- Img -->
       <g clip-path="url(#hexClip)">
          <image href="{data['avatar']}" width="100" height="100" />
       </g>
+      <!-- Stroke -->
       <path d="{hex_path}" fill="none" stroke="{data['status_color']}" stroke-width="3" />
   </g>
 
-  <!-- 2. DATA PANEL (Float) -->
+  <!-- 2. DATA BLOCK (Floating) -->
   <g transform="translate(145, 42)" class="anim-float">
-      <!-- Username -->
-      <text x="0" y="0" class="font-ui" font-weight="700" font-size="28" fill="white" style="text-shadow: 2px 2px 0 rgba(0,0,0,0.5)">
+      <!-- Global Display Name -->
+      <text x="0" y="0" class="font-ui" font-weight="700" font-size="28" fill="white" filter="url(#textDrop)">
         {data['name']}
       </text>
       
-      <!-- Line 1: Song Name or Activity Title -->
-      <text x="0" y="22" class="font-tech" font-weight="800" font-size="12" fill="{data['status_color']}" letter-spacing="0.5">
+      <!-- LINE 1 (Song or Activity Type) -->
+      <text x="0" y="24" class="font-tech" font-weight="800" font-size="12" fill="{data['status_color']}">
          >> {data['line_1']}
       </text>
       
-      <!-- Line 2: Artist or Activity Details -->
-      <text x="0" y="36" class="font-tech" font-weight="400" font-size="10" fill="#AAA">
+      <!-- LINE 2 (Details) -->
+      <text x="0" y="38" class="font-tech" font-weight="400" font-size="11" fill="#DDD" letter-spacing="0.5">
          {data['line_2']}
       </text>
   </g>
 
-  <!-- 3. AI CHIP (Bottom Panel) -->
+  <!-- 3. AI HUD (Bottom) -->
   <g transform="translate(145, 95)" class="anim-float">
-      <rect x="0" y="0" width="310" height="35" rx="6" fill="rgba(0,0,0,0.4)" stroke="rgba(255,255,255,0.1)"/>
+      <!-- Glass Pill Background -->
+      <rect x="0" y="0" width="315" height="36" rx="8" fill="rgba(0,0,0,0.3)" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
       
-      <!-- Little decorative blocks -->
-      <rect x="5" y="10" width="3" height="15" fill="{data['status_color']}" />
-      <rect x="10" y="10" width="3" height="15" fill="{data['status_color']}" opacity="0.5"/>
+      <!-- Decorative Tech Bar -->
+      <rect x="10" y="12" width="4" height="12" fill="{data['status_color']}"/>
       
-      <!-- The AI Message -->
-      <text x="25" y="21" class="font-ui" font-weight="500" font-size="13" fill="#E0E0FF">
-        <tspan fill="#5865F2" font-weight="700">AI //</tspan> {ai_msg}<tspan class="pulse-text">_</tspan>
+      <text x="26" y="22" class="font-ui" font-weight="500" font-size="13" fill="#DDEEFF">
+        <tspan fill="#5865F2" font-weight="800">AI //</tspan> {ai_msg}<tspan class="pulse-text">_</tspan>
       </text>
   </g>
 
-  <!-- Footer -->
-  <text x="460" y="150" text-anchor="end" class="font-tech" font-size="8" fill="#333">UID: {data['id']}</text>
+  <text x="465" y="150" text-anchor="end" class="font-tech" font-size="9" fill="#FFFFFF" opacity="0.4">ID: {data['id']}</text>
 
 </svg>"""
     return svg
 
 @app.route('/superbadge/<user_id>')
 def serve_badge(user_id):
-    # Fetch User & Music
-    data = get_user_data(user_id)
+    # Parse Query Args
+    args = request.args
+    
+    # Fetch Data with Args support
+    data = get_user_data(user_id, args)
     
     msg = "STANDBY"
     if data['valid']:
-        # Prompt based on Music vs Activity
-        context_str = f"{data['line_1']} {data['line_2']}"
-        msg = consult_gemini(context_str, data['name'], data['is_music'])
+        # If the user is idle/offline and we are using a custom idle message, tell the AI
+        forced_idle = args.get('idleMessage')
+        msg = consult_gemini(data['line_2'], data['name'], custom_idle=forced_idle)
     else:
         msg = "CONNECTION REQUIRED"
 
@@ -271,7 +323,10 @@ def serve_badge(user_id):
 
 @app.route('/')
 def home():
-    return "CHILLAX SERVER BADGE OS v4.0 (MUSIC_MODULE_ACTIVE)"
+    return """<h1 style='font-family:sans-serif; background:#111; color:#fff; padding:20px'>
+    HYPERBADGE ONLINE.<br><br>
+    Usage: /superbadge/ID?bg=000000&idleMessage=Sleeping&borderRadius=30&showDisplayName=true
+    </h1>"""
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
