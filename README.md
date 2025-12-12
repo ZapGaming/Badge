@@ -7,7 +7,7 @@
 
 # 🧠 NEURAL STATUS
 
-[![AI Badge](https://badge-oq5l.onrender.com/superbadge/YOUR_DISCORD_ID)](https://discord.com/users/YOUR_DISCORD_ID)
+[![AI Badge](https://badge-oq5l.onrender.com/superbadge/1173155162093785099)](https://discord.com/users/1173155162093785099)
 
 > *Status updated dynamically by Google Gemini AI based on my Discord activity.*
 
