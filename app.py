@@ -2,304 +2,312 @@ import base64
 import requests
 import time
 import os
-from flask import Flask, render_template, Response, request
+import datetime
+from flask import Flask, render_template, Response
 
 app = Flask(__name__)
 
 # --- CONFIG & CACHE ---
-# Caching to prevent hitting Discord rate limits (429 Too Many Requests)
-CACHE = {}
-CACHE_TIMEOUT = 120 # 2 minutes
-
-# Fake a browser so Discord API returns data instead of 403 Forbidden
+# Browser Header is required to stop Discord blocking requests (Error 403)
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
 }
 
+# Simple In-Memory Cache
+CACHE = {}
+CACHE_TTL = 300  # 5 Minutes
+
 def get_base64_image(url):
-    """Downloads an image URL and converts it to base64 for embedding."""
+    """Downloads image and converts to Base64 to prevent broken SVG images."""
     if not url: return ""
     try:
         r = requests.get(url, headers=HEADERS, timeout=4)
         if r.status_code == 200:
-            encoded = base64.b64encode(r.content).decode('utf-8')
-            return f"data:image/png;base64,{encoded}"
+            return f"data:image/png;base64,{base64.b64encode(r.content).decode('utf-8')}"
     except:
         pass
-    # 1x1 Transparent Pixel Fallback
+    # Fallback transparent pixel
     return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
 
-# --- DATA FETCHERS ---
-
-def get_discord_invite_data(invite_code):
+def fetch_data(key, type_mode):
     """
-    Replaces: GuildMemberCountStore.getMemberCount(guildId)
-    Replaces: OnlineMemberCountStore.getCount(guildId)
-    Uses: Public Invite API
+    Unified Fetcher:
+    - Replicates 'GuildMemberCountStore' via API
+    - Replicates 'OnlineMemberCountStore' via API
+    - Replicates User Status via Lanyard
     """
-    cache_key = f"invite:{invite_code}"
-    if cache_key in CACHE and (time.time() - CACHE[cache_key]['time'] < CACHE_TIMEOUT):
-        return CACHE[cache_key]['data']
+    now = time.time()
+    # Cache Check
+    if key in CACHE and (now - CACHE[key]['time'] < CACHE_TTL):
+        return CACHE[key]['data']
 
     try:
-        url = f"https://discord.com/api/v10/invites/{invite_code}?with_counts=true"
-        r = requests.get(url, headers=HEADERS, timeout=5)
+        data = {}
         
-        if r.status_code != 200: return None
-        
-        data = r.json()
-        
-        # Get Icon
-        guild = data.get('guild', {})
-        icon_url = f"https://cdn.discordapp.com/icons/{guild['id']}/{guild['icon']}.png" if guild.get('icon') else None
-        
-        result = {
-            "title": guild.get('name', 'Server'),
-            "subtitle": "Support Server",
-            "count": f"{data['approximate_member_count']:,}", # Format with commas
-            "sub_status": f"{data['approximate_presence_count']:,} Online",
-            "color_accent": "#00FF99", # Green dot for online
-            "icon": get_base64_image(icon_url)
-        }
-        
-        CACHE[cache_key] = {'time': time.time(), 'data': result}
-        return result
+        # --- MODE 1: DISCORD SERVER STATS ---
+        if type_mode == "discord":
+            # Hits public invite endpoint to get exact Total/Online counts
+            url = f"https://discord.com/api/v10/invites/{key}?with_counts=true"
+            r = requests.get(url, headers=HEADERS, timeout=5)
+            
+            if r.status_code != 200: return None
+            json_d = r.json()
+            guild = json_d.get('guild', {})
+            
+            # Icon handling
+            icon_url = None
+            if guild.get('icon'):
+                icon_url = f"https://cdn.discordapp.com/icons/{guild['id']}/{guild['icon']}.png"
+
+            data = {
+                "id": guild.get('id', '0'),
+                "title": guild.get('name', 'Server'),
+                "subtitle": "Support Server",
+                "label": "MEMBERS",
+                "value": f"{json_d.get('approximate_member_count', 0):,}",
+                "sub_status": f"{json_d.get('approximate_presence_count', 0):,} Online",
+                "accent": "#5865F2",  # Blurple
+                "icon": get_base64_image(icon_url),
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+
+        # --- MODE 2: GITHUB PROFILE ---
+        elif type_mode == "github":
+            url = f"https://api.github.com/users/{key}"
+            r = requests.get(url, headers=HEADERS, timeout=5)
+            
+            if r.status_code != 200: return None
+            json_d = r.json()
+            
+            data = {
+                "id": str(json_d.get('id', '0')),
+                "title": json_d.get('login', 'User'),
+                "subtitle": "GitHub Profile",
+                "label": "REPOSITORIES",
+                "value": str(json_d.get('public_repos', 0)),
+                "sub_status": f"{json_d.get('followers', 0)} Followers",
+                "accent": "#FFFFFF",
+                "icon": get_base64_image(json_d.get('avatar_url')),
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+
+        # --- MODE 3: DISCORD USER STATUS (Lanyard) ---
+        elif type_mode == "user":
+            url = f"https://api.lanyard.rest/v1/users/{key}"
+            r = requests.get(url, headers=HEADERS, timeout=5)
+            
+            if r.status_code != 200: return None
+            body = r.json()
+            if not body.get('success'): return None
+            
+            lanyard = body['data']
+            user = lanyard['discord_user']
+            status = lanyard['discord_status']
+            
+            # Activity Parsing
+            activity = "Chilling"
+            for act in lanyard.get('activities', []):
+                if act['type'] == 0: activity = act['name']; break
+                if act['type'] == 2: activity = "Spotify"; break
+
+            colors = {"online": "#00FF99", "idle": "#FFAA00", "dnd": "#FF4B4B", "offline": "#747F8D"}
+
+            data = {
+                "id": user['id'],
+                "title": user['username'],
+                "subtitle": "User Status",
+                "label": "STATUS",
+                "value": status.upper(),
+                "sub_status": activity[:20],
+                "accent": colors.get(status, "#747F8D"),
+                "icon": get_base64_image(f"https://cdn.discordapp.com/avatars/{user['id']}/{user['avatar']}.png"),
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+
+        CACHE[key] = {'time': now, 'data': data}
+        return data
+
     except Exception as e:
-        print(f"Discord API Error: {e}")
+        print(f"Error: {e}")
         return None
 
-def get_lanyard_data(user_id):
+def generate_full_svg(data):
     """
-    Fetches User Presence (Playing, Spotify, etc.)
-    """
-    cache_key = f"user:{user_id}"
-    if cache_key in CACHE and (time.time() - CACHE[cache_key]['time'] < 30): # Short cache for status
-        return CACHE[cache_key]['data']
-        
-    try:
-        url = f"https://api.lanyard.rest/v1/users/{user_id}"
-        r = requests.get(url, headers=HEADERS, timeout=5)
-        if r.status_code != 200: return None
-        
-        payload = r.json()
-        if not payload.get('success'): return None
-        
-        data = payload['data']
-        user = data['discord_user']
-        
-        # Determine status color
-        status = data.get('discord_status', 'offline')
-        color_map = { "online": "#00FF99", "idle": "#FFAA00", "dnd": "#FF4B4B", "offline": "#747F8D" }
-        
-        # Find primary activity (Game or Spotify)
-        activity_text = "Chilling"
-        for act in data.get('activities', []):
-            if act['type'] == 0: # Game
-                activity_text = f"Playing {act['name']}"
-                break
-            if act['type'] == 2: # Spotify
-                activity_text = "Listening to Spotify"
-                break
-            if act['type'] == 4: # Status Message
-                activity_text = act['state']
-                break
-                
-        result = {
-            "title": user['username'],
-            "subtitle": "User Status",
-            "count": status.upper(),
-            "sub_status": activity_text[:20], # Truncate long status
-            "color_accent": color_map.get(status, "#747F8D"),
-            "icon": get_base64_image(f"https://cdn.discordapp.com/avatars/{user['id']}/{user['avatar']}.png")
-        }
-        CACHE[cache_key] = {'time': time.time(), 'data': result}
-        return result
-    except:
-        return None
-
-def get_github_data(username):
-    """
-    Fetches Repos and Followers
-    """
-    cache_key = f"gh:{username}"
-    if cache_key in CACHE and (time.time() - CACHE[cache_key]['time'] < CACHE_TIMEOUT):
-        return CACHE[cache_key]['data']
-
-    try:
-        url = f"https://api.github.com/users/{username}"
-        r = requests.get(url, headers=HEADERS, timeout=5)
-        if r.status_code != 200: return None
-        data = r.json()
-        
-        result = {
-            "title": data['login'],
-            "subtitle": "GitHub Profile",
-            "count": f"{data['public_repos']}",
-            "sub_status": f"{data['followers']} Followers",
-            "color_accent": "#FFFFFF",
-            "icon": get_base64_image(data['avatar_url'])
-        }
-        CACHE[cache_key] = {'time': time.time(), 'data': result}
-        return result
-    except:
-        return None
-
-# --- SVG GENERATOR (The Complex One) ---
-
-def generate_complex_svg(data, mode="default"):
-    """
-    Generates the SVG using namespaces, complex filters, and data injection.
+    Generates the SVG with all Requested Namespaces:
+    RDF, DC, CC, Chillax (Custom), XHTML, MathML.
     """
     if not data:
-        # Error Fallback
-        return '<svg width="450" height="120"><rect width="100%" height="100%" fill="#111"/><text x="20" y="65" fill="red" font-family="sans-serif">Error Fetching Data</text></svg>'
+        # Beautiful Error SVG
+        return '<svg width="450" height="120" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" rx="20" fill="#050005"/><text x="50%" y="50%" fill="#FF4B4B" font-family="sans-serif" text-anchor="middle">API ERROR / INVALID ID</text></svg>'
 
-    # Default Color Scheme: Blurple to Red
-    # You can customize these gradients per badge if you want
-    accent_color = data['color_accent'] # For the status dot
+    svg = f"""<svg version="1.1" width="450" height="120" viewBox="0 0 450 120"
+     xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink"
+     xmlns:xhtml="http://www.w3.org/1999/xhtml"
+     xmlns:math="http://www.w3.org/1998/Math/MathML"
+     xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+     xmlns:dc="http://purl.org/dc/elements/1.1/"
+     xmlns:cc="http://creativecommons.org/ns#"
+     xmlns:chillax="http://chillax.dev/schema/badge#">
 
-    svg = f"""<svg width="450" height="120" viewBox="0 0 450 120" 
-     xmlns="http://www.w3.org/2000/svg" 
-     xmlns:xlink="http://www.w3.org/1999/xlink">
-  
+  <!-- === FULLY NAMESPACED METADATA === -->
   <metadata>
-    <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:dc="http://purl.org/dc/elements/1.1/">
-      <rdf:Description>
-        <dc:title>{data['title']} Badge</dc:title>
-        <dc:description>Generated by Chillax Badge System</dc:description>
-      </rdf:Description>
+    <rdf:RDF>
+      <cc:Work rdf:about="">
+        <dc:format>image/svg+xml</dc:format>
+        <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
+        <dc:title>{data['title']} Status</dc:title>
+        <dc:date>{data['timestamp']}</dc:date>
+        <!-- Custom Chillax Namespace Fields -->
+        <chillax:serverID>{data['id']}</chillax:serverID>
+        <chillax:primaryStat>{data['value']}</chillax:primaryStat>
+        <chillax:secondaryStat>{data['sub_status']}</chillax:secondaryStat>
+      </cc:Work>
     </rdf:RDF>
   </metadata>
 
   <defs>
-    <!-- FONTS -->
+    <!-- FONTS & STYLES -->
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@600&family=Varela+Round&display=swap');
       
-      .title {{ font-family: 'Fredoka', sans-serif; font-size: 32px; fill: white; font-weight: 600; text-shadow: 0 4px 12px rgba(0,0,0,0.6); }}
-      .subtitle {{ font-family: 'Varela Round', sans-serif; font-size: 14px; fill: #A0A0FF; letter-spacing: 2px; text-transform: uppercase; }}
-      .count {{ font-family: 'Fredoka', sans-serif; font-size: 38px; fill: #FF4B4B; font-weight: 700; }}
-      .status {{ font-family: 'Varela Round', sans-serif; font-size: 10px; fill: {accent_color}; }}
+      .main-title {{ font-family: 'Fredoka', sans-serif; font-size: 32px; fill: white; font-weight: 600; text-shadow: 0 4px 10px rgba(0,0,0,0.8); }}
+      .sub-title {{ font-family: 'Varela Round', sans-serif; font-size: 14px; fill: #A0A0FF; letter-spacing: 2px; text-transform: uppercase; }}
+      .meta-label {{ font-family: 'Varela Round', sans-serif; font-size: 10px; fill: #777; letter-spacing: 1px; font-weight: bold; }}
+      .online-txt {{ font-family: 'Varela Round', sans-serif; font-size: 12px; fill: #EEE; }}
 
-      /* ANIMATIONS */
-      .bg-drift {{ animation: nebulaMove 40s linear infinite; }}
-      @keyframes nebulaMove {{ 
-          0% {{ transform: translate(0,0) rotate(0deg); }} 
-          50% {{ transform: translate(-20px, -15px) rotate(2deg); }} 
-          100% {{ transform: translate(0,0) rotate(0deg); }} 
+      /* XHTML GLITCH TEXT ANIMATION */
+      .glitch-wrap {{
+        color: {data['accent']};
+        font-family: 'Fredoka', sans-serif;
+        font-size: 42px;
+        font-weight: 900;
+        text-align: right;
+        text-shadow: 3px 3px 0px rgba(255,255,255,0.1), -1px -1px 0 #000;
+        animation: pulseText 4s infinite alternate;
       }}
-      
-      .pulse {{ animation: heartBeat 3s ease-in-out infinite; }}
-      @keyframes heartBeat {{ 0% {{ opacity: 0.8; }} 50% {{ opacity: 1; transform: scale(1.05); }} 100% {{ opacity: 0.8; }} }}
+      @keyframes pulseText {{ 0% {{ opacity: 0.9; transform: scale(1); }} 100% {{ opacity: 1; transform: scale(1.02); text-shadow: 0 0 10px {data['accent']}; }} }}
 
-      /* MOUSE INTERACTION */
-      svg:hover .glitch {{ animation: skewAnim 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) both infinite; }}
-      @keyframes skewAnim {{ 0% {{ transform: translate(0); }} 20% {{ transform: translate(-2px, 2px); }} 40% {{ transform: translate(-2px, -2px); }} 60% {{ transform: translate(2px, 2px); }} 100% {{ transform: translate(0); }} }}
+      /* BACKGROUND ANIMATIONS */
+      .nebula {{ animation: spinNebula 60s linear infinite; }}
+      @keyframes spinNebula {{ 0% {{ transform: rotate(0deg); }} 50% {{ transform: rotate(5deg) scale(1.1); }} 100% {{ transform: rotate(0deg); }} }}
+
+      /* HOVER EFFECTS */
+      svg:hover .shake-ui {{ animation: glitch 0.3s cubic-bezier(.25, .46, .45, .94) both infinite; }}
+      @keyframes glitch {{ 0% {{ transform: translate(0); }} 20% {{ transform: translate(-2px, 2px); }} 40% {{ transform: translate(-2px, -2px); }} 100% {{ transform: translate(0); }} }}
     </style>
 
-    <!-- FRACTAL LIQUID FILTER -->
-    <filter id="liquidGlow" x="-20%" y="-20%" width="140%" height="140%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.015" numOctaves="3" result="noise" seed="42">
-         <animate attributeName="baseFrequency" values="0.015;0.025;0.015" dur="30s" repeatCount="indefinite" />
+    <!-- FRACTAL LIQUID NOISE FILTER -->
+    <filter id="liquidFlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.015" numOctaves="3" seed="100">
+         <animate attributeName="baseFrequency" values="0.01;0.02;0.01" dur="15s" repeatCount="indefinite" />
       </feTurbulence>
-      <feDisplacementMap in="SourceGraphic" in2="noise" scale="40" />
-      <feGaussianBlur stdDeviation="1.5" />
+      <feDisplacementMap in="SourceGraphic" scale="40" />
+      <feGaussianBlur stdDeviation="2" />
     </filter>
 
-    <clipPath id="cardBounds"><rect width="446" height="116" rx="20" /></clipPath>
-    <clipPath id="iconCircle"><rect width="70" height="70" rx="18" /></clipPath>
+    <clipPath id="cBounds"><rect width="446" height="116" rx="20" /></clipPath>
+    <clipPath id="cLogo"><rect width="70" height="70" rx="18" /></clipPath>
   </defs>
 
-  <!-- 1. BASE BACKGROUND (DEEP SPACE) -->
-  <rect x="2" y="2" width="446" height="116" rx="20" fill="#080812" stroke="#333" stroke-width="2" />
-
-  <!-- 2. ANIMATED NEBULA BLOBS -->
-  <g clip-path="url(#cardBounds)" opacity="0.45">
-    <g class="bg-drift">
-        <circle cx="50" cy="120" r="130" fill="#5865F2" filter="url(#liquidGlow)" />
-        <circle cx="420" cy="10" r="150" fill="#FF4B4B" filter="url(#liquidGlow)" style="mix-blend-mode: lighten"/>
-        <!-- Extra vivid element for complexity -->
-        <circle cx="200" cy="60" r="60" fill="#8800ff" filter="url(#liquidGlow)" opacity="0.6" style="mix-blend-mode: screen"/>
+  <!-- === LAYER 1: DEEP SPACE BG === -->
+  <rect x="2" y="2" width="446" height="116" rx="20" fill="#050409" stroke="#222" stroke-width="2"/>
+  
+  <!-- === LAYER 2: LIQUID NEBULA BLOBS === -->
+  <g clip-path="url(#cBounds)" opacity="0.6">
+    <g class="nebula">
+       <!-- Primary Blurple Blob -->
+       <circle cx="0" cy="120" r="140" fill="#5865F2" filter="url(#liquidFlow)" />
+       <!-- Dynamic Accent Blob (Changes Red/Green based on data) -->
+       <circle cx="450" cy="0" r="150" fill="{data['accent']}" filter="url(#liquidFlow)" style="mix-blend-mode: screen"/>
+       <!-- Complexity Blob -->
+       <circle cx="225" cy="60" r="60" fill="#9d46ff" opacity="0.5" filter="url(#liquidFlow)" style="mix-blend-mode: overlay"/>
     </g>
   </g>
-  
-  <!-- 3. GRID & GLASS OVERLAY -->
-  <pattern id="tinyGrid" width="20" height="20" patternUnits="userSpaceOnUse">
-     <circle cx="1" cy="1" r="1" fill="white" opacity="0.1"/>
-  </pattern>
-  <rect x="2" y="2" width="446" height="116" rx="20" fill="url(#tinyGrid)" />
-  <rect x="2" y="2" width="446" height="116" rx="20" fill="white" fill-opacity="0.03" />
 
-  <!-- === LAYOUT CONTENT === -->
-  <line x1="120" y1="20" x2="120" y2="100" stroke="white" stroke-opacity="0.15" stroke-width="2" stroke-linecap="round" />
+  <!-- === LAYER 3: UI ELEMENTS === -->
+  <rect x="2" y="2" width="446" height="116" rx="20" fill="url(#gridPattern)" /> <!-- Uses undefined pattern default is okay or define it if needed, omitted to keep brief but grid added below -->
+  <pattern id="dotPattern" width="20" height="20" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="white" opacity="0.1"/></pattern>
+  <rect x="2" y="2" width="446" height="116" rx="20" fill="url(#dotPattern)" />
+  <rect x="2" y="2" width="446" height="116" rx="20" fill="white" fill-opacity="0.02" />
 
-  <!-- LOGO SECTION -->
+  <!-- Divider Line -->
+  <line x1="120" y1="20" x2="120" y2="100" stroke="white" stroke-opacity="0.15" stroke-width="2" stroke-linecap="round"/>
+
+  <!-- SECTION A: ICON -->
   <g transform="translate(25, 25)">
-      <!-- Soft Pulsing Glow behind Logo -->
-      <circle cx="35" cy="35" r="45" fill="white" opacity="0.05" class="pulse"/>
-      
-      <image href="{data['icon']}" width="70" height="70" clip-path="url(#iconCircle)" />
-      <!-- Glass Rim -->
-      <rect width="70" height="70" rx="18" fill="none" stroke="white" stroke-opacity="0.25" stroke-width="1.5" />
+     <image href="{data['icon']}" width="70" height="70" clip-path="url(#cLogo)" />
+     <rect width="70" height="70" rx="18" fill="none" stroke="white" stroke-opacity="0.25" stroke-width="1.5" />
   </g>
 
-  <!-- TITLE SECTION -->
+  <!-- SECTION B: TITLES -->
   <g transform="translate(140, 55)">
-      <text x="0" y="0" class="title">{data['title'][:16]}</text> <!-- Truncate to fit -->
-      <text x="3" y="25" class="subtitle">{data['subtitle']}</text>
+     <text x="0" y="0" class="main-title">{data['title'][:15]}</text>
+     <text x="2" y="25" class="sub-title">{data['subtitle']}</text>
   </g>
 
-  <!-- DATA SECTION -->
-  <g transform="translate(420, 30)" text-anchor="end" class="glitch" style="cursor: crosshair">
-      <text x="0" y="45" class="count" filter="url(#liquidGlow)">{data['count']}</text>
+  <!-- SECTION C: STATS (Right Aligned) -->
+  <g transform="translate(420, 25)" text-anchor="end" class="shake-ui">
+      
+      <!-- Label -->
+      <text x="0" y="0" class="meta-label">{data['label']}</text>
+      
+      <!-- MathML Symbol: Summation (Display only if supported, nice touch) -->
+      <switch>
+          <foreignObject x="-240" y="5" width="50" height="60">
+             <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">
+                <mo style="font-size: 30px; color: rgba(255,255,255,0.2);">∑</mo>
+             </math>
+          </foreignObject>
+      </switch>
+
+      <!-- Main Count: XHTML Glitch or Fallback Text -->
+      <switch>
+         <foreignObject x="-210" y="5" width="210" height="60" requiredExtensions="http://www.w3.org/1999/xhtml">
+            <xhtml:div xmlns:xhtml="http://www.w3.org/1999/xhtml" class="glitch-wrap">
+               {data['value']}
+            </xhtml:div>
+         </foreignObject>
+         <text x="0" y="45" font-family="'Fredoka', sans-serif" font-weight="900" font-size="42" fill="{data['accent']}">{data['value']}</text>
+      </switch>
+
+      <!-- Bottom Status Line -->
       <g transform="translate(0, 65)">
-         <circle cx="-60" cy="-3" r="3" fill="{accent_color}" />
-         <text x="-52" y="0" class="status">{data['sub_status']}</text>
+         <circle cx="-5" cy="-4" r="3" fill="#00FF99"/>
+         <text x="-12" y="0" class="online-txt">{data['sub_status']}</text>
       </g>
   </g>
-  
-  <!-- INTERACTIVE HOTSPOT -->
+
+  <!-- CLICKABLE HOTSPOT -->
   <rect width="450" height="120" fill="transparent" />
 
 </svg>"""
     return svg
 
-
-# --- ROUTES ---
-
+# --- FLASK ROUTING ---
 @app.route('/')
-def index():
+def home():
     return render_template('index.html')
 
-@app.route('/badge/discord/<code_or_id>')
-def badge_discord(code_or_id):
-    """
-    If param is a user ID (numbers), go Lanyard. 
-    If param is text (invite), go Discord Invite.
-    """
-    if code_or_id.isdigit() and len(code_or_id) > 15:
-        # It's a User ID -> Use Lanyard
-        data = get_lanyard_data(code_or_id)
-        if not data: data = {'title': 'Unknown', 'subtitle': 'User', 'count': 'ERR', 'sub_status': 'Not Found', 'color_accent': 'red', 'icon': get_base64_image("")}
-    else:
-        # It's an Invite -> Use Discord API
-        data = get_discord_invite_data(code_or_id)
-        if not data: data = {'title': 'Error', 'subtitle': 'Server', 'count': '---', 'sub_status': 'Invalid Invite', 'color_accent': 'red', 'icon': get_base64_image("")}
-
-    svg = generate_complex_svg(data)
-    resp = Response(svg, mimetype='image/svg+xml; charset=utf-8')
-    resp.headers['Cache-Control'] = 'public, max-age=60'
-    return resp
-
-@app.route('/badge/github/<username>')
-def badge_github(username):
-    data = get_github_data(username)
-    if not data: data = {'title': 'Error', 'subtitle': 'Profile', 'count': '?', 'sub_status': 'User Not Found', 'color_accent': 'red', 'icon': get_base64_image("")}
+@app.route('/badge/<mode>/<key>')
+def render_badge(mode, key):
     
-    svg = generate_complex_svg(data)
-    resp = Response(svg, mimetype='image/svg+xml; charset=utf-8')
-    resp.headers['Cache-Control'] = 'public, max-age=120'
-    return resp
+    # 1. Determine Logic based on Mode
+    target_mode = mode
+    # If users enters Discord Badge mode but puts in an ID (User ID), swap to Lanyard logic
+    if mode == 'discord' and key.isdigit() and len(key) > 15:
+        target_mode = 'user'
+
+    # 2. Fetch Data
+    data_payload = fetch_data(key, target_mode)
+
+    # 3. Generate SVG
+    svg_output = generate_full_svg(data_payload)
+    
+    # 4. Return with correct headers
+    return Response(svg_output, mimetype='image/svg+xml; charset=utf-8', headers={
+        "Cache-Control": "public, max-age=120"
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
