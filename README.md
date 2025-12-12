@@ -3,12 +3,20 @@
 [![Live Stats](https://raw.githubusercontent.com/ZapGaming/Badge/0132c408215a13420f632a12211bbcd49a10cb3b/Example.svg?token=BGHZGDA4LMX6XV3IQWA7T6LJHOS6G)](https://discord.gg/DrfX6286kF)
 
 
+<div align="center">
+
+# 🧠 NEURAL STATUS
+
+[![AI Badge](https://badge-oq5l.onrender.com/superbadge/YOUR_DISCORD_ID)](https://discord.com/users/YOUR_DISCORD_ID)
+
+> *Status updated dynamically by Google Gemini AI based on my Discord activity.*
+
+</div>
 
 
 <div align="center">
 
 # C H I L L A X 
-### <i>The Next Generation of Community & Development</i>
 
 <!-- 
   LIVE DYNAMIC BADGES 
