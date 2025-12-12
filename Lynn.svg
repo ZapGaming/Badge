@@ -1,4 +1,4 @@
-<svg width="550" height="150" viewBox="0 0 550 150" fill="none" xmlns="http://www.w3.org/2000/svg">
+<svg width="580" height="150" viewBox="0 0 580 150" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="AccentGradient" x1="0%" y1="0%" x2="100%" y2="0%">
       <stop offset="0%" style="stop-color:#0078D4; stop-opacity:1" />
@@ -6,21 +6,26 @@
     </linearGradient>
     
     <clipPath id="RoundedRectOuter">
-      <rect width="550" height="150" rx="15"/>
+      <rect width="580" height="150" rx="15"/>
     </clipPath>
   </defs>
 
   <g clip-path="url(#RoundedRectOuter)">
     
     <g id="VibrantBackground" opacity="0.4">
-      <ellipse cx="50" cy="150" rx="80" ry="60" fill="#0078D4"/> <rect x="400" y="-10" width="200" height="100" fill="#7CBB00" transform="rotate(20 400 -10)"/> <ellipse cx="500" cy="30" rx="90" ry="70" fill="#FF8C00"/> <rect x="-30" y="-30" width="120" height="150" fill="#F25022"/> </g>
-    <rect x="15" y="15" width="520" height="120" rx="15" fill="#FFFFFF" opacity="0.95"/>
+      <ellipse cx="50" cy="150" rx="80" ry="60" fill="#0078D4"/> 
+      <rect x="430" y="-10" width="200" height="100" fill="#7CBB00" transform="rotate(20 430 -10)"/> 
+      <ellipse cx="530" cy="30" rx="90" ry="70" fill="#FF8C00"/> 
+      <rect x="-30" y="-30" width="120" height="150" fill="#F25022"/> 
+      <ellipse cx="450" cy="150" rx="50" ry="80" fill="#00B7C3"/>
+    </g>
+    <rect x="15" y="15" width="550" height="120" rx="15" fill="#FFFFFF" opacity="0.95"/>
     
     <style>
-      /* Styling matching the image examples */
-      .name { font: 700 24px 'Segoe UI', Arial, sans-serif; fill: url(#AccentGradient); letter-spacing: -0.5px; }
+      /* ADJUSTED: Name font size reduced to 28px for fit */
+      .name { font: 700 28px 'Segoe UI', Arial, sans-serif; fill: url(#AccentGradient); letter-spacing: -0.5px; }
       .role { font: 400 16px 'Segoe UI', Arial, sans-serif; fill: #505050; }
-      .company { font: 700 18px 'Segoe UI', Arial, sans-serif; fill: #000000; margin-top: 5px;} 
+      .company { font: 700 18px 'Segoe UI', Arial, sans-serif; fill: #000000;} 
       .contact-text { font: 400 14px 'Segoe UI', Arial, sans-serif; fill: #222222; }
       .contact-icon { fill: #0078D4; } /* Microsoft Blue */
     </style>
@@ -41,7 +46,7 @@
       
       <text x="0" y="25" class="role">Role / Title</text>
 
-      <text x="0" y="50" class="company">Microsoft</text>
+      <text x="0" y="50" class="company">Microsoft Corporation</text>
       
       <g transform="translate(0, 80)">
         <g>
@@ -49,9 +54,9 @@
           <text x="18" y="10" class="contact-text">name.surname@microsoft.com</text>
         </g>
         
-        <line x1="260" y1="0" x2="260" y2="15" stroke="#BBBBBB" stroke-width="1"/>
+        <line x1="285" y1="0" x2="285" y2="15" stroke="#BBBBBB" stroke-width="1"/>
 
-        <g transform="translate(280, 0)">
+        <g transform="translate(300, 0)">
           <path class="contact-icon" d="M14 2H6C4.9 2 4 2.9 4 4V16C4 17.1 4.9 18 6 18H14C15.1 18 16 17.1 16 16V4C16 2.9 15.1 2 14 2ZM14 4V16H6V4H14ZM10 17C10.55 17 11 16.55 11 16C11 15.45 10.55 15 10 15C9.45 15 9 15.45 9 16C9 16.55 9.45 17 10 17Z" transform="scale(0.7) translate(0, 0)"/>
           <text x="18" y="10" class="contact-text">(65) 9109 3756</text>
         </g>
