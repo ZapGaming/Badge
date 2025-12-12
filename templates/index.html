@@ -2,91 +2,95 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dynamic Badge Generator</title>
+    <title>Chillax Badge System</title>
     <style>
-        :root { --bg: #050410; --card: #0F0E1E; --primary: #5865F2; --accent: #FF4B4B; --text: #FFFFFF; }
-        body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; overflow-x: hidden; }
+        @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@600&display=swap');
         
-        /* Moving Grid BG */
-        .bg-grid { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-image: radial-gradient(rgba(88, 101, 242, 0.15) 1px, transparent 1px); background-size: 30px 30px; z-index: -1; pointer-events: none; }
+        :root { --bg: #040309; --panel: #0D0C15; --primary: #5865F2; --accent: #FF4B4B; }
         
-        .container { width: 90%; max-width: 600px; background: rgba(15, 14, 30, 0.8); backdrop-filter: blur(10px); padding: 40px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 0 50px rgba(88, 101, 242, 0.2); }
+        body { margin: 0; background: var(--bg); color: white; font-family: 'Fredoka', sans-serif; display: flex; flex-direction: column; align-items: center; min-height: 100vh; overflow-x: hidden; }
         
-        h1 { font-size: 2.5rem; text-align: center; background: linear-gradient(45deg, var(--primary), var(--accent)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 20px; }
-        p { text-align: center; color: #889; margin-bottom: 30px; }
-
-        .tabs { display: flex; justify-content: center; gap: 10px; margin-bottom: 20px; }
-        .tab-btn { background: none; border: 1px solid var(--primary); color: var(--primary); padding: 10px 20px; border-radius: 8px; cursor: pointer; transition: 0.2s; }
-        .tab-btn.active { background: var(--primary); color: white; }
-
-        .input-group { position: relative; display: flex; gap: 10px; }
-        input { flex: 1; padding: 15px; background: #000; border: 1px solid #333; color: white; border-radius: 10px; font-size: 1.1rem; outline: none; }
+        .stars { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: radial-gradient(white 1px, transparent 1px) 0 0 / 50px 50px; opacity: 0.1; z-index: -1; }
+        
+        .main-box { width: 90%; max-width: 600px; margin-top: 50px; background: var(--panel); border: 1px solid #222; padding: 40px; border-radius: 20px; box-shadow: 0 20px 50px rgba(0,0,0,0.5); position: relative; overflow: hidden; }
+        
+        /* Moving gradients for aesthetic */
+        .main-box::before { content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%; background: linear-gradient(45deg, var(--primary), var(--accent), var(--primary)); opacity: 0.1; animation: spin 10s linear infinite; z-index: 0; pointer-events: none; }
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        
+        h1 { z-index: 2; position: relative; margin: 0 0 20px; font-size: 2.5rem; text-align: center; }
+        .controls { position: relative; z-index: 2; display: flex; flex-direction: column; gap: 15px; }
+        
+        select, input, button { padding: 15px; border-radius: 12px; border: 2px solid #333; background: #000; color: white; font-family: inherit; font-size: 1rem; outline: none; transition: 0.3s; }
         input:focus { border-color: var(--primary); }
-        button#gen { background: var(--primary); border: none; color: white; padding: 15px 30px; border-radius: 10px; font-weight: bold; cursor: pointer; transition: 0.3s; }
-        button#gen:hover { transform: translateY(-2px); box-shadow: 0 5px 20px rgba(88,101,242,0.4); }
+        button { background: var(--primary); border: none; font-weight: bold; cursor: pointer; box-shadow: 0 4px 15px rgba(88,101,242,0.4); }
+        button:hover { transform: scale(1.02); filter: brightness(1.2); }
 
-        #preview-area { margin-top: 40px; display: none; text-align: center; }
-        .code-box { background: #000; padding: 15px; border-radius: 8px; text-align: left; margin-top: 15px; font-family: monospace; color: #0f9; border: 1px solid #222; overflow-x: auto; white-space: nowrap; }
+        .preview { margin-top: 40px; text-align: center; display: none; z-index: 2; position: relative; }
+        img.badge-preview { filter: drop-shadow(0 10px 20px rgba(0,0,0,0.6)); max-width: 100%; }
         
-        /* The badge itself needs a subtle shadow */
-        #badge-img { filter: drop-shadow(0 0 15px rgba(255, 75, 75, 0.2)); max-width: 100%; transition: transform 0.2s; }
-        #badge-img:hover { transform: scale(1.02); }
+        .copy-box { background: #050505; padding: 10px; margin-top: 10px; border-radius: 8px; font-family: monospace; border: 1px solid #333; overflow-x: auto; white-space: nowrap; color: #00FF99; text-align: left;}
+        label { margin-top: 15px; display: block; font-size: 0.9rem; color: #888; }
     </style>
 </head>
 <body>
-    <div class="bg-grid"></div>
+    <div class="stars"></div>
 
-    <div class="container">
-        <h1>Live Status Badges</h1>
-        <p>Create dynamic SVG badges for your GitHub README</p>
-
-        <div class="tabs">
-            <button class="tab-btn active" onclick="setMode('discord')">Discord</button>
-            <button class="tab-btn" onclick="setMode('github')">GitHub</button>
+    <div class="main-box">
+        <h1>CHILLAX<span style="color:var(--accent)">BADGE</span></h1>
+        
+        <div class="controls">
+            <select id="typeSelector">
+                <option value="discord">Discord Server (Enter Invite Code)</option>
+                <option value="user">Discord User Status (Enter User ID)</option>
+                <option value="github">GitHub Profile (Enter Username)</option>
+            </select>
+            
+            <input type="text" id="inputVal" placeholder="DrfX6286kF">
+            
+            <button onclick="generate()">GENERATE SVG</button>
         </div>
 
-        <div class="input-group">
-            <input type="text" id="inputVal" placeholder="Enter Discord Invite Code (e.g. DrfX6286kF)">
-            <button id="gen" onclick="generate()">Create</button>
-        </div>
-
-        <div id="preview-area">
-            <img id="badge-img" src="" alt="Badge Preview">
+        <div id="result" class="preview">
+            <h3>Live Preview</h3>
+            <img id="badgeImg" class="badge-preview" src="">
             
-            <p style="margin-top:20px; color: #fff;">Markdown Embed</p>
-            <div class="code-box" id="markdown-out"></div>
+            <label>Markdown Code (For GitHub)</label>
+            <div id="codeMd" class="copy-box"></div>
             
-            <p style="margin-top:20px; color: #fff;">HTML Embed (Centered)</p>
-            <div class="code-box" id="html-out"></div>
+            <label>HTML Code (For Websites)</label>
+            <div id="codeHtml" class="copy-box"></div>
         </div>
     </div>
 
     <script>
-        let mode = 'discord';
-
-        function setMode(m) {
-            mode = m;
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            event.target.classList.add('active');
-            
-            const inp = document.getElementById('inputVal');
-            if (m === 'discord') inp.placeholder = "Enter Discord Invite Code";
-            else inp.placeholder = "Enter GitHub Username";
-        }
-
         function generate() {
-            const val = document.getElementById('inputVal').value.trim();
-            if(!val) return;
+            const type = document.getElementById('typeSelector').value;
+            const input = document.getElementById('inputVal').value.trim();
+            if (!input) return;
 
-            const host = window.location.origin;
-            const url = `${host}/badge/${mode}/${val}`;
+            let endpoint = '';
+            // Backend handles routing: 
+            // - If type is 'user', input is digit ID -> /discord/{id} handles lanyard logic
+            // - If type is 'discord', input is code -> /discord/{code}
+            if (type === 'github') endpoint = `/badge/github/${input}`;
+            else endpoint = `/badge/discord/${input}`;
 
-            document.getElementById('preview-area').style.display = 'block';
-            document.getElementById('badge-img').src = url;
+            const fullUrl = window.location.origin + endpoint;
+            
+            // Force reload img
+            const img = document.getElementById('badgeImg');
+            img.src = fullUrl + "?t=" + new Date().getTime();
+            
+            let link = '';
+            if(type === 'discord') link = `https://discord.gg/${input}`;
+            if(type === 'user') link = `https://discord.com/users/${input}`;
+            if(type === 'github') link = `https://github.com/${input}`;
 
-            document.getElementById('markdown-out').textContent = `[![Live Stats](${url})](${mode === 'discord' ? 'https://discord.gg/'+val : 'https://github.com/'+val})`;
-            document.getElementById('html-out').textContent = `<a href="${mode === 'discord' ? 'https://discord.gg/'+val : 'https://github.com/'+val}"><img src="${url}" alt="Stats Badge"></a>`;
+            document.getElementById('codeMd').textContent = `[![Status](${fullUrl})](${link})`;
+            document.getElementById('codeHtml').textContent = `<a href="${link}"><img src="${fullUrl}" alt="Badge"></a>`;
+
+            document.getElementById('result').style.display = 'block';
         }
     </script>
 </body>
