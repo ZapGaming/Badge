@@ -1,313 +1,244 @@
 import base64
 import requests
-import time
 import os
 import datetime
-from flask import Flask, render_template, Response
+import random
+import google.generativeai as genai
+from flask import Flask, Response, request, redirect
 
 app = Flask(__name__)
 
-# --- CONFIG & CACHE ---
-# Browser Header is required to stop Discord blocking requests (Error 403)
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-}
+# --- CONFIGURATION ---
+# Get key from: https://aistudio.google.com/app/apikey
+GOOGLE_API_KEY = os.environ.get("GEMINI_API_KEY")
+if GOOGLE_API_KEY:
+    genai.configure(api_key=GOOGLE_API_KEY)
 
-# Simple In-Memory Cache
 CACHE = {}
-CACHE_TTL = 300  # 5 Minutes
+AI_CACHE = {} 
+CACHE_TTL = 300 # 5 min for logic
+AI_TTL = 900    # 15 min for AI responses (save quota)
 
-def get_base64_image(url):
-    """Downloads image and converts to Base64 to prevent broken SVG images."""
-    if not url: return ""
+# Fake Browser Header
+HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+
+def get_base64(url):
     try:
-        r = requests.get(url, headers=HEADERS, timeout=4)
-        if r.status_code == 200:
-            return f"data:image/png;base64,{base64.b64encode(r.content).decode('utf-8')}"
+        r = requests.get(url, headers=HEADERS, timeout=3)
+        return f"data:image/png;base64,{base64.b64encode(r.content).decode('utf-8')}"
     except:
-        pass
-    # Fallback transparent pixel
-    return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+        return "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
 
-def fetch_data(key, type_mode):
+# --- AI LOGIC ---
+def consult_gemini(context_text, user_name):
     """
-    Unified Fetcher:
-    - Replicates 'GuildMemberCountStore' via API
-    - Replicates 'OnlineMemberCountStore' via API
-    - Replicates User Status via Lanyard
+    Asks Gemini to generate a short 'System Status' or 'Roast'.
     """
-    now = time.time()
-    # Cache Check
-    if key in CACHE and (now - CACHE[key]['time'] < CACHE_TTL):
-        return CACHE[key]['data']
+    # Check AI Cache first
+    cache_key = f"{user_name}_ai"
+    if cache_key in AI_CACHE:
+        return AI_CACHE[cache_key]
+
+    if not GOOGLE_API_KEY:
+        return "AI MODULE OFFLINE // API KEY MISSING"
 
     try:
-        data = {}
+        model = genai.GenerativeModel('gemini-pro')
+        prompt = f"""
+        Act as a Sci-Fi Ship Computer (like JARVIS or Cortana).
+        The user '{user_name}' current status is: "{context_text}".
+        Write a ONE LINE, COOL, UPPERCASE status update about this. 
+        Max 7 words. Be cryptic but cool. 
+        Examples: "SYNCHRONIZING NEURAL NET", "COMPILING QUANTUM SHARDS", "IDLE DETECTED: POWER SAVE MODE".
+        """
+        response = model.generate_content(prompt)
+        text = response.text.strip().upper().replace('"', '')
         
-        # --- MODE 1: DISCORD SERVER STATS ---
-        if type_mode == "discord":
-            # Hits public invite endpoint to get exact Total/Online counts
-            url = f"https://discord.com/api/v10/invites/{key}?with_counts=true"
-            r = requests.get(url, headers=HEADERS, timeout=5)
-            
-            if r.status_code != 200: return None
-            json_d = r.json()
-            guild = json_d.get('guild', {})
-            
-            # Icon handling
-            icon_url = None
-            if guild.get('icon'):
-                icon_url = f"https://cdn.discordapp.com/icons/{guild['id']}/{guild['icon']}.png"
-
-            data = {
-                "id": guild.get('id', '0'),
-                "title": guild.get('name', 'Server'),
-                "subtitle": "Support Server",
-                "label": "MEMBERS",
-                "value": f"{json_d.get('approximate_member_count', 0):,}",
-                "sub_status": f"{json_d.get('approximate_presence_count', 0):,} Online",
-                "accent": "#5865F2",  # Blurple
-                "icon": get_base64_image(icon_url),
-                "timestamp": datetime.datetime.now().isoformat()
-            }
-
-        # --- MODE 2: GITHUB PROFILE ---
-        elif type_mode == "github":
-            url = f"https://api.github.com/users/{key}"
-            r = requests.get(url, headers=HEADERS, timeout=5)
-            
-            if r.status_code != 200: return None
-            json_d = r.json()
-            
-            data = {
-                "id": str(json_d.get('id', '0')),
-                "title": json_d.get('login', 'User'),
-                "subtitle": "GitHub Profile",
-                "label": "REPOSITORIES",
-                "value": str(json_d.get('public_repos', 0)),
-                "sub_status": f"{json_d.get('followers', 0)} Followers",
-                "accent": "#FFFFFF",
-                "icon": get_base64_image(json_d.get('avatar_url')),
-                "timestamp": datetime.datetime.now().isoformat()
-            }
-
-        # --- MODE 3: DISCORD USER STATUS (Lanyard) ---
-        elif type_mode == "user":
-            url = f"https://api.lanyard.rest/v1/users/{key}"
-            r = requests.get(url, headers=HEADERS, timeout=5)
-            
-            if r.status_code != 200: return None
-            body = r.json()
-            if not body.get('success'): return None
-            
-            lanyard = body['data']
-            user = lanyard['discord_user']
-            status = lanyard['discord_status']
-            
-            # Activity Parsing
-            activity = "Chilling"
-            for act in lanyard.get('activities', []):
-                if act['type'] == 0: activity = act['name']; break
-                if act['type'] == 2: activity = "Spotify"; break
-
-            colors = {"online": "#00FF99", "idle": "#FFAA00", "dnd": "#FF4B4B", "offline": "#747F8D"}
-
-            data = {
-                "id": user['id'],
-                "title": user['username'],
-                "subtitle": "User Status",
-                "label": "STATUS",
-                "value": status.upper(),
-                "sub_status": activity[:20],
-                "accent": colors.get(status, "#747F8D"),
-                "icon": get_base64_image(f"https://cdn.discordapp.com/avatars/{user['id']}/{user['avatar']}.png"),
-                "timestamp": datetime.datetime.now().isoformat()
-            }
-
-        CACHE[key] = {'time': now, 'data': data}
-        return data
-
+        AI_CACHE[cache_key] = text
+        return text
     except Exception as e:
-        print(f"Error: {e}")
+        return "SYSTEM STANDBY // AI REBOOTING"
+
+# --- DATA FETCHING ---
+def get_lanyard_user(user_id):
+    """Fetches User Status & Activity."""
+    try:
+        r = requests.get(f"https://api.lanyard.rest/v1/users/{user_id}", headers=HEADERS, timeout=4)
+        if r.status_code != 200: return None
+        
+        d = r.json()['data']
+        u = d['discord_user']
+        status = d['discord_status']
+        
+        activity = "NET_RUNNING"
+        for act in d.get('activities', []):
+            if act['type'] == 0: activity = f"PLAYING {act['name']}".upper()
+            if act['type'] == 2: activity = "PROCESSING AUDIO STREAM"
+            if act['type'] == 4: activity = "DATA UPLINK ESTABLISHED"
+
+        return {
+            "name": u['username'],
+            "status_color": {"online": "#00FF99", "idle": "#FFAA00", "dnd": "#FF4B4B"}.get(status, "#777"),
+            "raw_status": activity,
+            "avatar": get_base64(f"https://cdn.discordapp.com/avatars/{u['id']}/{u['avatar']}.png"),
+            "id": user_id
+        }
+    except:
         return None
 
-def generate_full_svg(data):
-    """
-    Generates the SVG with all Requested Namespaces:
-    RDF, DC, CC, Chillax (Custom), XHTML, MathML.
-    """
-    if not data:
-        # Beautiful Error SVG
-        return '<svg width="450" height="120" xmlns="http://www.w3.org/2000/svg"><rect width="100%" height="100%" rx="20" fill="#050005"/><text x="50%" y="50%" fill="#FF4B4B" font-family="sans-serif" text-anchor="middle">API ERROR / INVALID ID</text></svg>'
-
-    svg = f"""<svg version="1.1" width="450" height="120" viewBox="0 0 450 120"
+# --- HYPER-SVG GENERATOR ---
+def generate_super_svg(data, ai_message):
+    
+    # We use GLSL-like SVG Filters to simulate shaders
+    svg = f"""<svg version="1.1" width="480" height="160" viewBox="0 0 480 160"
      xmlns="http://www.w3.org/2000/svg"
      xmlns:xlink="http://www.w3.org/1999/xlink"
      xmlns:xhtml="http://www.w3.org/1999/xhtml"
-     xmlns:math="http://www.w3.org/1998/Math/MathML"
+     xmlns:ai="http://google.deepmind/schema#"
      xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
      xmlns:dc="http://purl.org/dc/elements/1.1/"
-     xmlns:cc="http://creativecommons.org/ns#"
-     xmlns:chillax="http://chillax.dev/schema/badge#">
+     xmlns:chillax="http://chillax.dev/superbadge#">
 
-  <!-- === FULLY NAMESPACED METADATA === -->
   <metadata>
     <rdf:RDF>
-      <cc:Work rdf:about="">
-        <dc:format>image/svg+xml</dc:format>
-        <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage" />
-        <dc:title>{data['title']} Status</dc:title>
-        <dc:date>{data['timestamp']}</dc:date>
-        <!-- Custom Chillax Namespace Fields -->
-        <chillax:serverID>{data['id']}</chillax:serverID>
-        <chillax:primaryStat>{data['value']}</chillax:primaryStat>
-        <chillax:secondaryStat>{data['sub_status']}</chillax:secondaryStat>
-      </cc:Work>
+      <dc:title>Interactive Neural Badge</dc:title>
+      <dc:creator>Gemini Integration System</dc:creator>
+      <ai:model>Gemini-Pro</ai:model>
+      <ai:response>{ai_message}</ai:response>
+      <chillax:interaction>True</chillax:interaction>
     </rdf:RDF>
   </metadata>
 
   <defs>
-    <!-- FONTS & STYLES -->
     <style>
-      @import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@600&family=Varela+Round&display=swap');
+      @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;800&display=swap');
       
-      .main-title {{ font-family: 'Fredoka', sans-serif; font-size: 32px; fill: white; font-weight: 600; text-shadow: 0 4px 10px rgba(0,0,0,0.8); }}
-      .sub-title {{ font-family: 'Varela Round', sans-serif; font-size: 14px; fill: #A0A0FF; letter-spacing: 2px; text-transform: uppercase; }}
-      .meta-label {{ font-family: 'Varela Round', sans-serif; font-size: 10px; fill: #777; letter-spacing: 1px; font-weight: bold; }}
-      .online-txt {{ font-family: 'Varela Round', sans-serif; font-size: 12px; fill: #EEE; }}
+      :root {{ --main: {data['status_color']}; --bg: #030303; }}
+      
+      .terminal {{ font-family: 'JetBrains Mono', monospace; fill: white; }}
+      .h1 {{ font-weight: 800; font-size: 20px; letter-spacing: 2px; }}
+      .h2 {{ font-weight: 400; font-size: 10px; fill: var(--main); letter-spacing: 1px; }}
+      .console {{ font-size: 10px; fill: #aaa; }}
+      .ai-text {{ fill: #00ffff; font-weight: 800; animation: blinkCursor 4s infinite; }}
 
-      /* XHTML GLITCH TEXT ANIMATION */
-      .glitch-wrap {{
-        color: {data['accent']};
-        font-family: 'Fredoka', sans-serif;
-        font-size: 42px;
-        font-weight: 900;
-        text-align: right;
-        text-shadow: 3px 3px 0px rgba(255,255,255,0.1), -1px -1px 0 #000;
-        animation: pulseText 4s infinite alternate;
-      }}
-      @keyframes pulseText {{ 0% {{ opacity: 0.9; transform: scale(1); }} 100% {{ opacity: 1; transform: scale(1.02); text-shadow: 0 0 10px {data['accent']}; }} }}
-
-      /* BACKGROUND ANIMATIONS */
-      .nebula {{ animation: spinNebula 60s linear infinite; }}
-      @keyframes spinNebula {{ 0% {{ transform: rotate(0deg); }} 50% {{ transform: rotate(5deg) scale(1.1); }} 100% {{ transform: rotate(0deg); }} }}
-
-      /* HOVER EFFECTS */
-      svg:hover .shake-ui {{ animation: glitch 0.3s cubic-bezier(.25, .46, .45, .94) both infinite; }}
-      @keyframes glitch {{ 0% {{ transform: translate(0); }} 20% {{ transform: translate(-2px, 2px); }} 40% {{ transform: translate(-2px, -2px); }} 100% {{ transform: translate(0); }} }}
+      @keyframes blinkCursor {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: 0.7; }} }}
+      
+      /* HYPER SHADER ANIMATION */
+      .shader-anim {{ animation: shiftColor 20s infinite alternate; }}
+      @keyframes shiftColor {{ 0% {{ fill: #5865F2; }} 100% {{ fill: #FF0055; }} }}
+      
+      /* CLICKABLE BUTTONS STYLING */
+      .btn {{ cursor: pointer; transition: 0.2s; }}
+      .btn:hover rect {{ stroke: #fff; fill: rgba(255,255,255,0.1); }}
     </style>
 
-    <!-- FRACTAL LIQUID NOISE FILTER -->
-    <filter id="liquidFlow" x="-20%" y="-20%" width="140%" height="140%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.015" numOctaves="3" seed="100">
-         <animate attributeName="baseFrequency" values="0.01;0.02;0.01" dur="15s" repeatCount="indefinite" />
+    <!-- FAKE GLSL SHADER: DISPLACEMENT TURBULENCE -->
+    <filter id="quantumFlux" x="-20%" y="-20%" width="140%" height="140%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.005" numOctaves="5" seed="50">
+        <animate attributeName="baseFrequency" values="0.005;0.02;0.005" dur="15s" repeatCount="indefinite"/>
       </feTurbulence>
-      <feDisplacementMap in="SourceGraphic" scale="40" />
-      <feGaussianBlur stdDeviation="2" />
+      <feColorMatrix type="hueRotate" values="0">
+        <animate attributeName="values" from="0" to="360" dur="20s" repeatCount="indefinite"/>
+      </feColorMatrix>
+      <feDisplacementMap in="SourceGraphic" scale="60" />
+      <feGaussianBlur stdDeviation="3" />
+      <feComposite in="SourceGraphic" operator="in" />
     </filter>
 
-    <clipPath id="cBounds"><rect width="446" height="116" rx="20" /></clipPath>
-    <clipPath id="cLogo"><rect width="70" height="70" rx="18" /></clipPath>
+    <clipPath id="screenMask"><rect x="10" y="10" width="460" height="140" rx="10" /></clipPath>
+    <clipPath id="avatarHex"><path d="M42 0 L84 25 L84 75 L42 100 L0 75 L0 25 Z" transform="translate(20, 30) scale(0.8)"/></clipPath>
   </defs>
 
-  <!-- === LAYER 1: DEEP SPACE BG === -->
-  <rect x="2" y="2" width="446" height="116" rx="20" fill="#050409" stroke="#222" stroke-width="2"/>
+  <!-- === LAYER 1: CHASSIS === -->
+  <rect width="480" height="160" rx="15" fill="#08080a" stroke="#222" stroke-width="2"/>
   
-  <!-- === LAYER 2: LIQUID NEBULA BLOBS === -->
-  <g clip-path="url(#cBounds)" opacity="0.6">
-    <g class="nebula">
-       <!-- Primary Blurple Blob -->
-       <circle cx="0" cy="120" r="140" fill="#5865F2" filter="url(#liquidFlow)" />
-       <!-- Dynamic Accent Blob (Changes Red/Green based on data) -->
-       <circle cx="450" cy="0" r="150" fill="{data['accent']}" filter="url(#liquidFlow)" style="mix-blend-mode: screen"/>
-       <!-- Complexity Blob -->
-       <circle cx="225" cy="60" r="60" fill="#9d46ff" opacity="0.5" filter="url(#liquidFlow)" style="mix-blend-mode: overlay"/>
-    </g>
+  <!-- === LAYER 2: THE QUANTUM BACKGROUND (GLSL MIMIC) === -->
+  <g clip-path="url(#screenMask)">
+     <rect width="100%" height="100%" fill="#000" />
+     <!-- Dynamic Plasma -->
+     <g style="mix-blend-mode: screen; opacity: 0.6">
+        <circle cx="100" cy="50" r="100" class="shader-anim" filter="url(#quantumFlux)" />
+        <circle cx="380" cy="120" r="120" fill="{data['status_color']}" filter="url(#quantumFlux)" />
+     </g>
+     <!-- Grid Overlay -->
+     <path d="M0 0 L480 0 L480 160 L0 160" fill="url(#gridPat)" />
   </g>
 
-  <!-- === LAYER 3: UI ELEMENTS === -->
-  <rect x="2" y="2" width="446" height="116" rx="20" fill="url(#gridPattern)" /> <!-- Uses undefined pattern default is okay or define it if needed, omitted to keep brief but grid added below -->
-  <pattern id="dotPattern" width="20" height="20" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="white" opacity="0.1"/></pattern>
-  <rect x="2" y="2" width="446" height="116" rx="20" fill="url(#dotPattern)" />
-  <rect x="2" y="2" width="446" height="116" rx="20" fill="white" fill-opacity="0.02" />
+  <!-- === LAYER 3: INTERFACE === -->
+  <pattern id="gridPat" width="20" height="20" patternUnits="userSpaceOnUse">
+    <path d="M20 0 L0 0 L0 20" fill="none" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+  </pattern>
+  <rect x="10" y="10" width="460" height="140" rx="10" fill="url(#gridPat)" />
+  
+  <!-- Scanner Line -->
+  <rect x="10" y="10" width="460" height="2" fill="white" opacity="0.1">
+    <animate attributeName="y" values="10;150;10" dur="5s" repeatCount="indefinite" />
+  </rect>
 
-  <!-- Divider Line -->
-  <line x1="120" y1="20" x2="120" y2="100" stroke="white" stroke-opacity="0.15" stroke-width="2" stroke-linecap="round"/>
-
-  <!-- SECTION A: ICON -->
-  <g transform="translate(25, 25)">
-     <image href="{data['icon']}" width="70" height="70" clip-path="url(#cLogo)" />
-     <rect width="70" height="70" rx="18" fill="none" stroke="white" stroke-opacity="0.25" stroke-width="1.5" />
+  <!-- === DATA DISPLAY === -->
+  
+  <!-- AVATAR (HEXAGON MASK) -->
+  <g>
+    <!-- Rotating ring behind avatar -->
+    <path d="M42 0 L84 25 L84 75 L42 100 L0 75 L0 25 Z" fill="none" stroke="{data['status_color']}" stroke-width="2" transform="translate(20, 30) scale(0.9)">
+        <animateTransform attributeName="transform" type="rotate" from="0 42 50" to="360 42 50" dur="20s" repeatCount="indefinite" />
+    </path>
+    <image href="{data['avatar']}" width="90" height="90" clip-path="url(#avatarHex)" x="-5" y="5"/>
   </g>
 
-  <!-- SECTION B: TITLES -->
-  <g transform="translate(140, 55)">
-     <text x="0" y="0" class="main-title">{data['title'][:15]}</text>
-     <text x="2" y="25" class="sub-title">{data['subtitle']}</text>
-  </g>
-
-  <!-- SECTION C: STATS (Right Aligned) -->
-  <g transform="translate(420, 25)" text-anchor="end" class="shake-ui">
+  <!-- TERMINAL READOUT -->
+  <g transform="translate(120, 45)" class="terminal">
+      <text x="0" y="0" class="h1">{data['name'].upper()}</text>
+      <text x="0" y="15" class="h2"> // {data['raw_status']}</text>
       
-      <!-- Label -->
-      <text x="0" y="0" class="meta-label">{data['label']}</text>
-      
-      <!-- MathML Symbol: Summation (Display only if supported, nice touch) -->
-      <switch>
-          <foreignObject x="-240" y="5" width="50" height="60">
-             <math xmlns="http://www.w3.org/1998/Math/MathML" display="block">
-                <mo style="font-size: 30px; color: rgba(255,255,255,0.2);">∑</mo>
-             </math>
-          </foreignObject>
-      </switch>
-
-      <!-- Main Count: XHTML Glitch or Fallback Text -->
-      <switch>
-         <foreignObject x="-210" y="5" width="210" height="60" requiredExtensions="http://www.w3.org/1999/xhtml">
-            <xhtml:div xmlns:xhtml="http://www.w3.org/1999/xhtml" class="glitch-wrap">
-               {data['value']}
-            </xhtml:div>
-         </foreignObject>
-         <text x="0" y="45" font-family="'Fredoka', sans-serif" font-weight="900" font-size="42" fill="{data['accent']}">{data['value']}</text>
-      </switch>
-
-      <!-- Bottom Status Line -->
-      <g transform="translate(0, 65)">
-         <circle cx="-5" cy="-4" r="3" fill="#00FF99"/>
-         <text x="-12" y="0" class="online-txt">{data['sub_status']}</text>
+      <!-- AI MESSAGE BOX -->
+      <g transform="translate(0, 35)">
+         <rect x="-5" y="-12" width="340" height="30" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.2)" rx="4"/>
+         <text x="5" y="8" class="console">GEMINI_AI > <tspan class="ai-text">{ai_message}</tspan></text>
       </g>
+      
+      <!-- FOOTER STATS -->
+      <text x="0" y="80" class="console" fill="#555">UID: {data['id']}  |  LINK_STATUS: STABLE</text>
   </g>
 
-  <!-- CLICKABLE HOTSPOT -->
-  <rect width="450" height="120" fill="transparent" />
+  <!-- === INTERACTIVE 'BUTTONS' (LINKS) === -->
+  <!-- Because we can't do Javascript, we map rects to anchors -->
+  
+  <a xlink:href="https://discord.com/users/{data['id']}" target="_blank" class="btn">
+     <rect x="370" y="120" width="90" height="25" rx="5" fill="#5865F2" />
+     <text x="415" y="136" text-anchor="middle" font-family="JetBrains Mono" font-size="10" font-weight="bold" fill="white">CONTACT</text>
+  </a>
 
 </svg>"""
     return svg
 
-# --- FLASK ROUTING ---
+@app.route('/superbadge/<user_id>')
+def superbadge(user_id):
+    # 1. Fetch User Data
+    user_data = get_lanyard_user(user_id)
+    if not user_data:
+        user_data = {
+            'name': 'UNKNOWN', 'status_color': '#FF0000', 
+            'raw_status': 'DISCONNECTED', 'avatar': get_base64(""), 'id': '0000'
+        }
+
+    # 2. Consult AI (What witty thing to say based on status?)
+    #    We pass the activity text (e.g. "PLAYING MINECRAFT")
+    ai_msg = consult_gemini(user_data['raw_status'], user_data['name'])
+
+    # 3. Build the Hyper-SVG
+    svg = generate_super_svg(user_data, ai_msg)
+
+    # 4. Return with NO-CACHE (So the AI message updates)
+    return Response(svg, mimetype='image/svg+xml; charset=utf-8', headers={
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0"
+    })
+
 @app.route('/')
 def home():
-    return render_template('index.html')
-
-@app.route('/badge/<mode>/<key>')
-def render_badge(mode, key):
-    
-    # 1. Determine Logic based on Mode
-    target_mode = mode
-    # If users enters Discord Badge mode but puts in an ID (User ID), swap to Lanyard logic
-    if mode == 'discord' and key.isdigit() and len(key) > 15:
-        target_mode = 'user'
-
-    # 2. Fetch Data
-    data_payload = fetch_data(key, target_mode)
-
-    # 3. Generate SVG
-    svg_output = generate_full_svg(data_payload)
-    
-    # 4. Return with correct headers
-    return Response(svg_output, mimetype='image/svg+xml; charset=utf-8', headers={
-        "Cache-Control": "public, max-age=120"
-    })
+    return "Chillax Neural AI System Online. Endpoints: /superbadge/<userid>"
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
