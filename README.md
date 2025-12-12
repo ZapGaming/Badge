@@ -1,9 +1,6 @@
-# Badge
-
-[![Live Stats](https://raw.githubusercontent.com/ZapGaming/Badge/0132c408215a13420f632a12211bbcd49a10cb3b/Example.svg?token=BGHZGDA4LMX6XV3IQWA7T6LJHOS6G)](https://discord.gg/DrfX6286kF)
-
-
 <div align="center">
+  
+# Chillax Lanyard
 
 # 🧠 NEURAL STATUS
 
@@ -70,7 +67,6 @@
 ---
 
 ### 🎨 About
-> Providing high quality support and development tools for the Discord ecosystem.
-> Powered by **Liquid Nebula™** SVG Technology.
+> A complex theme for Discord
 
 </div>
