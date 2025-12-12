@@ -2,355 +2,323 @@ import base64
 import requests
 import os
 import html
+import time
 import random
+import datetime
 import google.generativeai as genai
 from flask import Flask, Response, request
 
 app = Flask(__name__)
 
-# --- CONFIG ---
+# --- CONFIG & CACHE ---
 GOOGLE_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GOOGLE_API_KEY:
     genai.configure(api_key=GOOGLE_API_KEY)
 
-# Use Firefox User-Agent to avoid blocking
+# High-Grade Cache to prevent API Bans
+CACHE = {} 
+CACHE_TTL = 120 # 2 minutes
+
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
 EMPTY_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
 
-# --- UTILS ---
+# --- UTILITY ---
 def get_base64(url):
+    """Converts image URL to Base64 safely."""
     if not url: return EMPTY_IMG
     try:
-        r = requests.get(url, headers=HEADERS, timeout=4)
+        r = requests.get(url, headers=HEADERS, timeout=3)
         if r.status_code == 200:
             return f"data:image/png;base64,{base64.b64encode(r.content).decode('utf-8')}"
     except:
         pass
     return EMPTY_IMG
 
-# --- AI CORE (DUAL MODE) ---
-def consult_gemini(status_text, user_name, mode="normal", is_music=False):
-    if not GOOGLE_API_KEY: return "AI OFFLINE"
+# --- AI CORE ---
+def consult_gemini(status_text, user_name, mode, is_music):
+    if not GOOGLE_API_KEY: return "AI OFFLINE (NO KEY)"
+    
+    # Memoize AI responses to save API quota/speed
+    cache_key = f"AI_{user_name}_{status_text}_{mode}"
+    if cache_key in CACHE: return CACHE[cache_key]
 
     try:
         model = genai.GenerativeModel('gemini-pro')
         
-        # 1. ROAST MODE
         if mode == "roast":
-            context = "playing music" if is_music else "doing this"
-            prompt = f"""
-            TASK: Roast the Discord user '{user_name}' who is currently {context}: "{status_text}".
-            - Be savage but funny. No swearing.
-            - If playing League/Valorant: Insult their skill.
-            - If Spotify: Insult their music taste.
-            - If Coding: Mock their spaghetti code.
-            - If Idle: Call them boring.
-            FORMAT: One UPPERCASE line. Max 8 words.
-            """
-        
-        # 2. SYSTEM/HUD MODE
+            ctx = "playing" if is_music else "doing"
+            prompt = f"ROAST '{user_name}' who is {ctx} '{status_text}'. Savage, uppercase, max 7 words."
         else:
-            prompt = f"""
-            TASK: Act as a Sci-Fi Operating System (JARVIS style).
-            Target: '{user_name}'
-            Activity: "{status_text}".
-            OUTPUT: A cool, technical status update. Max 5 words. UPPERCASE only.
-            Examples: "AUDIO STREAM SYNCED", "NEURAL UPLINK ACTIVE", "COMPILING DATA".
-            """
+            prompt = f"Status report for '{user_name}': '{status_text}'. Sci-Fi HUD style. Uppercase. Max 6 words."
         
         response = model.generate_content(prompt)
         text = response.text.strip().replace('"', '').replace("'", "")
-        return html.escape(text[:45]).upper()
+        
+        # Clean & Cache
+        final_text = html.escape(text[:45]).upper()
+        CACHE[cache_key] = final_text
+        return final_text
     except:
         return "DATA ENCRYPTED"
 
-# --- DATA LAYER (FULL FEATURED) ---
-def get_user_data(user_id):
+# --- UNIVERSAL DATA FETCHERS ---
+
+def fetch_discord_invite(code):
+    try:
+        r = requests.get(f"https://discord.com/api/v10/invites/{code}?with_counts=true", headers=HEADERS, timeout=4)
+        if r.status_code != 200: return None
+        d = r.json()
+        g = d['guild']
+        icon = f"https://cdn.discordapp.com/icons/{g['id']}/{g['icon']}.png" if g.get('icon') else None
+        
+        return {
+            "type": "server",
+            "name": html.escape(g['name']),
+            "line_1": "MEMBERS:",
+            "line_2": f"{d['approximate_member_count']:,}",
+            "status": f"{d['approximate_presence_count']:,} ONLINE",
+            "color": "#5865F2", # Blurple
+            "is_music": False,
+            "image": get_base64(icon)
+        }
+    except:
+        return None
+
+def fetch_github_user(username):
+    try:
+        r = requests.get(f"https://api.github.com/users/{username}", headers=HEADERS, timeout=4)
+        if r.status_code != 200: return None
+        d = r.json()
+        
+        return {
+            "type": "github",
+            "name": html.escape(d['login']),
+            "line_1": "REPOSITORIES:",
+            "line_2": str(d['public_repos']),
+            "status": f"{d['followers']} FOLLOWERS",
+            "color": "#FFFFFF",
+            "is_music": False,
+            "image": get_base64(d['avatar_url'])
+        }
+    except:
+        return None
+
+def fetch_lanyard_user(user_id, args):
     try:
         r = requests.get(f"https://api.lanyard.rest/v1/users/{user_id}", headers=HEADERS, timeout=4)
         data = r.json()
-        
-        if not r.status_code == 200 or not data['success']: 
-            return None
+        if not data['success']: return None
         
         d = data['data']
         u = d['discord_user']
         status = d['discord_status']
         
-        # LOGIC
-        display_color = "#555"
-        line_1 = ""
-        line_2 = ""
-        is_music = False
+        # Args Handling
+        show_global = args.get('showDisplayName', 'true').lower() == 'true'
+        custom_idle = args.get('idleMessage', 'IDLE')
         
-        colors = {
-            "online": "#00ffb3", "idle": "#ffbb00", "dnd": "#ff2a6d", "offline": "#555555",
-            "spotify": "#1DB954"
-        }
+        # Name Logic
+        name = u['username']
+        if show_global and u.get('global_name'): name = u['global_name']
         
-        # Priority 1: Spotify
+        # Color Map
+        colors = {"online": "#00FF99", "idle": "#FFBB00", "dnd": "#FF4444", "offline": "#555", "spotify": "#1DB954"}
+        
+        # Activity Logic
+        line_1, line_2, active_color = "", "", colors.get(status, "#555")
+        is_music, album_art = False, None
+        
         if d.get('spotify'):
-            spot = d['spotify']
-            line_1 = f"🎵 {html.escape(spot['song'])}"
-            line_2 = f"By {html.escape(spot['artist'])}"
-            display_color = colors['spotify']
+            s = d['spotify']
+            line_1 = f"🎵 {s['song']}"
+            line_2 = f"By {s['artist']}"
+            active_color = colors['spotify']
             is_music = True
-            
-        # Priority 2: Activities
+            if s.get('album_art_url'): album_art = get_base64(s['album_art_url'])
         else:
             found = False
             for act in d.get('activities', []):
-                if act['type'] == 0: # Game
-                    line_1 = "PLAYING:"
-                    line_2 = html.escape(act['name'])
-                    found = True; break
-                if act['type'] == 4: # Status
-                    st = act.get('state', '')
-                    if st:
-                        line_1 = "STATUS:"
-                        line_2 = html.escape(st)
-                        found = True; break
-                if act['type'] == 2:
-                    line_1 = "LISTENING:"
-                    line_2 = "Audio Stream"
-                    found = True; break
+                if act['type'] == 0: 
+                    line_1 = "PLAYING:"; line_2 = act['name']; found = True; break
+                if act['type'] == 4:
+                    line_1 = "NOTE:"; line_2 = act.get('state', ''); found = True; break
             
             if not found:
-                line_1 = "CURRENTLY:"
-                line_2 = status.upper()
-                
-            display_color = colors.get(status, "#555")
-
-        # Smart Truncate for long songs/status
-        if len(line_1) > 20: line_1 = line_1[:18] + ".."
-        if len(line_2) > 25: line_2 = line_2[:23] + ".."
+                if status == "online": line_1 = "STATUS:"; line_2 = "ONLINE"; 
+                else: line_1 = "STATUS:"; line_2 = custom_idle.upper()
 
         return {
-            "valid": True,
+            "type": "user",
             "id": u['id'],
-            "name": html.escape(u['global_name'] or u['username']),
-            "color": display_color,
-            "line_1": line_1,
-            "line_2": line_2,
+            "name": html.escape(name),
+            "line_1": html.escape(line_1),
+            "line_2": html.escape(line_2),
+            "status": status.upper(),
+            "color": active_color,
             "is_music": is_music,
-            "full_status_text": f"{line_1} {line_2}",
-            "avatar": get_base64(f"https://cdn.discordapp.com/avatars/{u['id']}/{u['avatar']}.png")
+            "album_art": album_art, # Special bg for Hyper mode
+            "image": get_base64(f"https://cdn.discordapp.com/avatars/{u['id']}/{u['avatar']}.png")
         }
-    except Exception as e:
-        print(e)
-        return {"valid": False, "color": "#F00", "name": "ERROR", "line_1": "API ERROR", "line_2": "RETRY", "avatar": EMPTY_IMG}
+    except:
+        return None
 
 # ==========================================
-#       THE RENDER ENGINES (SVGS)
+#       MASTER RENDER ENGINE
 # ==========================================
 
-# --- STYLE 1: HYPER (The Complex GLSL One) ---
-def render_hyper(d, msg):
+def render_svg(data, ai_msg, args):
+    style = args.get('style', 'hyper').lower()
+    
+    # Common Styling Logic
+    bg_override = args.get('bg')
+    radius = args.get('borderRadius', '20').replace('px','')
+    
+    if bg_override: 
+        bg_fill = f"#{bg_override}" if not bg_override.startswith('#') else bg_override
+    else: 
+        bg_fill = "#09090b"
+
+    # Hexagon Logic (Used in Hyper/Terminal)
     hex_path = "M50 0 L93.3 25 V75 L50 100 L6.7 75 V25 Z"
-    return f"""<svg width="480" height="160" viewBox="0 0 480 160" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-      <defs>
-        <style>@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@800&amp;family=Rajdhani:wght@500;700&amp;display=swap');
-        .h-font {{ font-family: 'Rajdhani', sans-serif; }} .h-mono {{ font-family: 'JetBrains Mono', monospace; }}
-        .anim-float {{ animation: fly 6s ease-in-out infinite; }} @keyframes fly {{ 0%,100%{{transform:translateY(0)}} 50%{{transform:translateY(-4px)}} }}
-        .bg-drift {{ animation: spin 25s linear infinite; transform-origin: 240px 80px; }} @keyframes spin {{ from{{transform:rotate(0deg)}} to{{transform:rotate(360deg)}} }}
-        .pulse {{ animation: p 2s infinite; }} @keyframes p {{ 50%{{opacity:0.5}} }}
-        </style>
-        <clipPath id="hClip"><path d="{hex_path}"/></clipPath>
-        <clipPath id="cClip"><rect width="480" height="160" rx="20"/></clipPath>
-        <filter id="glow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="8" /><feComposite in="SourceGraphic" operator="over"/></filter>
-      </defs>
-      
-      <!-- BG -->
-      <rect width="100%" height="100%" rx="20" fill="#09090b"/>
-      <g clip-path="url(#cClip)">
-        <g class="bg-drift" opacity="0.4">
-            <circle cx="50" cy="50" r="180" fill="{d['color']}" filter="url(#glow)"/>
-            <circle cx="450" cy="160" r="150" fill="#5865F2" filter="url(#glow)"/>
+
+    # --- STYLE 1: HYPER (Advanced GLSL & Album Art) ---
+    if style == 'hyper':
+        bg_content = ""
+        if data.get('album_art'):
+            bg_content = f"""
+            <image href="{data['album_art']}" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" filter="url(#blurStrong)" opacity="0.5"/>
+            <rect width="100%" height="100%" fill="black" opacity="0.3"/>
+            """
+        else:
+            bg_content = f"""
+            <g class="drift" opacity="0.35">
+                <circle cx="20" cy="20" r="150" fill="{data['color']}" filter="url(#liq)"/>
+                <circle cx="450" cy="150" r="130" fill="#5865F2" filter="url(#liq)"/>
+            </g>"""
+
+        return f"""<svg version="1.1" width="480" height="180" viewBox="0 0 480 180" 
+            xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"
+            xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+            xmlns:xhtml="http://www.w3.org/1999/xhtml"
+            xmlns:math="http://www.w3.org/1998/Math/MathML"
+            xmlns:chillax="http://chillax.dev/badge">
+        <metadata>
+            <rdf:RDF><chillax:data server="{data['name']}" stat="{data['line_2']}"/></rdf:RDF>
+        </metadata>
+        <defs>
+            <style>@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@800&amp;family=Rajdhani:wght@500;700&amp;display=swap');
+            .ui {{ font-family: 'Rajdhani', sans-serif; }} .mono {{ font-family: 'JetBrains Mono', monospace; }}
+            .drift {{ animation: d 20s linear infinite; transform-origin: center; }} @keyframes d {{ from{{transform:rotate(0deg)}} to{{transform:rotate(360deg)}} }}
+            .fly {{ animation: f 6s ease-in-out infinite; }} @keyframes f {{ 50%{{transform:translateY(-3px)}} }}
+            .pulse {{ animation: p 2s infinite; }} @keyframes p {{ 50%{{opacity:0.5}} }}
+            </style>
+            <filter id="liq" x="-20%" y="-20%" width="140%" height="140%"><feTurbulence type="fractalNoise" baseFrequency="0.01" /><feDisplacementMap in="SourceGraphic" scale="30"/></filter>
+            <filter id="blurStrong"><feGaussianBlur stdDeviation="8"/></filter>
+            <clipPath id="cardClip"><rect width="480" height="180" rx="{radius}"/></clipPath>
+            <clipPath id="hex"><path d="{hex_path}"/></clipPath>
+        </defs>
+        
+        <rect width="480" height="180" rx="{radius}" fill="{bg_fill}"/>
+        <g clip-path="url(#cardClip)">{bg_content}<rect width="480" height="180" fill="white" opacity="0.02"/></g>
+        
+        <!-- UI -->
+        <g transform="translate(25,40)">
+            <path d="{hex_path}" fill="{data['color']}" opacity="0.2" transform="translate(0,3)"/>
+            <g clip-path="url(#hex)"><image href="{data['image']}" width="100" height="100"/></g>
+            <path d="{hex_path}" fill="none" stroke="{data['color']}" stroke-width="3"/>
         </g>
-        <rect width="100%" height="100%" fill="rgba(255,255,255,0.03)"/>
-        <path d="M0 0 L480 0 L0 160 Z" fill="white" opacity="0.03"/>
-      </g>
+        
+        <g transform="translate(145,50)" class="fly">
+            <text y="0" class="ui" font-weight="700" font-size="30" fill="white" text-shadow="0 4px 10px rgba(0,0,0,0.5)">{data['name'].upper()}</text>
+            <text y="25" class="mono" font-size="12" fill="{data['color']}" font-weight="bold">>> {data['line_1'][:25]}</text>
+            <text y="42" class="mono" font-size="11" fill="#CCC">{data['line_2'][:35]}</text>
+        </g>
+        
+        <!-- AI Box -->
+        <g transform="translate(145,120)" class="fly" style="animation-delay:1s">
+            <rect width="310" height="35" rx="6" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.1)"/>
+            <text x="15" y="23" class="ui" font-size="13" fill="#E0E0FF"><tspan fill="#5865F2" font-weight="bold">AI</tspan> // {ai_msg}<tspan class="pulse">_</tspan></text>
+        </g>
+        </svg>"""
 
-      <!-- CONTENT -->
-      <g transform="translate(25, 30)">
-          <path d="{hex_path}" fill="{d['color']}" opacity="0.25" filter="url(#glow)" transform="translate(0,2)"/>
-          <g clip-path="url(#hClip)"><image href="{d['avatar']}" width="100" height="100"/></g>
-          <path d="{hex_path}" fill="none" stroke="{d['color']}" stroke-width="3"/>
-      </g>
+    # --- STYLE 2: CUTE (Kawaii) ---
+    elif style == 'cute':
+        return f"""<svg width="480" height="160" viewBox="0 0 480 160" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+        <defs><style>@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600&amp;display=swap');
+        .bob {{ animation: b 3s ease-in-out infinite; }} @keyframes b {{ 50%{{transform:translateY(-5px)}} }}</style>
+        <clipPath id="c"><circle cx="60" cy="60" r="50"/></clipPath></defs>
+        <rect width="480" height="160" rx="30" fill="#FFFAFA"/>
+        <rect x="5" y="5" width="470" height="150" rx="25" fill="none" stroke="{data['color']}" stroke-width="3" stroke-dasharray="10 6" opacity="0.3"/>
+        <g transform="translate(20,20)">
+            <circle cx="60" cy="60" r="54" fill="{data['color']}"/><image href="{data['image']}" width="120" height="120" clip-path="url(#c)"/>
+        </g>
+        <g transform="translate(150,45)">
+            <text y="0" font-family="Fredoka" font-size="26" font-weight="600" fill="#555">{data['name']}</text>
+            <text y="25" font-family="Fredoka" font-size="12" fill="{data['color']}">♥ {data['line_1']} {data['line_2']}</text>
+            <g transform="translate(0,45)" class="bob">
+                <rect width="280" height="35" rx="10" fill="#F0F8FF"/><text x="15" y="22" font-family="Fredoka" font-size="11" fill="#777">💬 {ai_msg.lower().capitalize()}</text>
+            </g>
+        </g>
+        </svg>"""
 
-      <g transform="translate(145, 42)" class="anim-float">
-          <text y="0" class="h-font" weight="700" font-size="28" fill="white" filter="url(#glow)">{d['name'].upper()}</text>
-          <text y="24" class="h-mono" font-size="11" fill="{d['color']}">>> {d['line_1']}</text>
-          <text y="38" class="h-mono" font-size="10" fill="#DDD">{d['line_2']}</text>
-      </g>
+    # --- STYLE 3: TERMINAL (Retro) ---
+    else:
+        return f"""<svg width="480" height="150" xmlns="http://www.w3.org/2000/svg">
+        <style>@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@500&amp;display=swap');</style>
+        <rect width="100%" height="100%" rx="6" fill="#0d1117" stroke="#30363d"/>
+        <circle cx="20" cy="20" r="5" fill="#ff5f56"/><circle cx="40" cy="20" r="5" fill="#ffbd2e"/><circle cx="60" cy="20" r="5" fill="#27c93f"/>
+        <g transform="translate(25,60)" font-family="Fira Code" font-size="12" fill="#c9d1d9">
+            <text>> usr = new Entity("{data['name']}")</text>
+            <text y="20">> usr.status = "{data['line_1']} {data['line_2']}"</text>
+            <text y="40">> sys.analysis()</text>
+            <text y="65" fill="#8b949e"># {ai_msg}_</text>
+        </g>
+        </svg>"""
 
-      <g transform="translate(145, 95)" class="anim-float" style="animation-delay: 1s">
-          <rect width="310" height="36" rx="8" fill="rgba(0,0,0,0.3)" stroke="rgba(255,255,255,0.15)"/>
-          <rect x="10" y="12" width="4" height="12" fill="{d['color']}"/>
-          <text x="26" y="22" class="h-font" font-size="13" fill="#E0E0FF">
-            <tspan fill="#5865F2" font-weight="bold">AI //</tspan> {msg} <tspan class="pulse">_</tspan>
-          </text>
-      </g>
-      <text x="460" y="150" text-anchor="end" class="h-mono" font-size="8" fill="#444">UID: {d['id']}</text>
-    </svg>"""
+# --- ROUTES ---
 
-# --- STYLE 2: CUTE (Pastel & Bubbly) ---
-def render_cute(d, msg):
-    # Pastelify the accent color slightly if it's too neon
-    acc = d['color']
-    if acc == "#555": acc = "#aaa"
+@app.route('/badge/<mode>/<key>')
+@app.route('/superbadge/<key>') # Backward compatibility
+def handler(mode="user", key=None):
+    # normalize args
+    args = request.args
     
-    return f"""<svg width="480" height="160" viewBox="0 0 480 160" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-      <defs>
-        <style>@import url('https://fonts.googleapis.com/css2?family=Fredoka:wght@400;600&amp;display=swap');
-        .bob {{ animation: b 3s ease-in-out infinite; }} @keyframes b {{ 50%{{transform:translateY(-6px)}} }}
-        .wiggle {{ animation: w 4s ease-in-out infinite; transform-origin: 430px 40px; }} @keyframes w {{ 0%,100%{{transform:rotate(-10deg)}} 50%{{transform:rotate(10deg)}} }}
-        </style>
-        <clipPath id="cir"><circle cx="60" cy="60" r="50"/></clipPath>
-        <filter id="soft"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.2"/></filter>
-      </defs>
-      
-      <!-- BG -->
-      <rect width="480" height="160" rx="30" fill="#FFFAFA"/>
-      <rect x="5" y="5" width="470" height="150" rx="25" fill="none" stroke="{acc}" stroke-width="4" stroke-dasharray="12 8" opacity="0.3"/>
-      
-      <!-- Decors -->
-      <circle cx="430" cy="40" r="20" fill="{acc}" opacity="0.2" class="wiggle"/>
-      <text x="420" y="47" font-size="20" class="wiggle" style="animation-delay:0.1s">✨</text>
-      
-      <!-- Content -->
-      <g transform="translate(20, 20)">
-         <circle cx="60" cy="60" r="54" fill="{acc}"/>
-         <image href="{d['avatar']}" width="120" height="120" clip-path="url(#cir)"/>
-      </g>
-      
-      <g transform="translate(150, 45)">
-         <text y="0" font-family="Fredoka" font-weight="600" font-size="28" fill="#555" filter="url(#soft)">{d['name']}</text>
-         
-         <g transform="translate(0, 15)">
-            <rect width="260" height="30" rx="15" fill="white" filter="url(#soft)"/>
-            <text x="15" y="20" font-family="Fredoka" font-size="12" fill="{acc}">💖 {d['line_1']} {d['line_2']}</text>
-         </g>
-         
-         <g transform="translate(0, 55)" class="bob">
-            <path d="M0 10 Q0 0 10 0 H280 Q290 0 290 10 V30 Q290 40 280 40 H30 L20 50 L10 40 H0 Z" fill="{acc}" opacity="0.1"/>
-            <text x="15" y="25" font-family="Fredoka" font-size="11" fill="#777">💭 {msg.lower().capitalize()}</text>
-         </g>
-      </g>
-    </svg>"""
-
-# --- STYLE 3: TERMINAL (Retro Hacker) ---
-def render_terminal(d, msg):
-    return f"""<svg width="480" height="150" viewBox="0 0 480 150" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-      <defs>
-        <style>@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@500&amp;display=swap');
-        .cursor {{ animation: k 1s step-end infinite; }} @keyframes k {{ 50% {{ opacity: 0 }} }}
-        </style>
-      </defs>
-      
-      <!-- Window -->
-      <rect width="480" height="150" rx="8" fill="#0d1117" stroke="#30363d"/>
-      
-      <!-- Title Bar -->
-      <rect width="480" height="25" rx="8" fill="#161b22"/>
-      <rect y="20" width="480" height="130" fill="#0d1117"/> <!-- Cut corners bottom -->
-      <circle cx="20" cy="12" r="6" fill="#ff5f56"/>
-      <circle cx="40" cy="12" r="6" fill="#ffbd2e"/>
-      <circle cx="60" cy="12" r="6" fill="#27c93f"/>
-      <text x="240" y="17" text-anchor="middle" font-family="Fira Code" font-size="10" fill="#8b949e">user_status.py</text>
-      
-      <!-- Code -->
-      <g transform="translate(20, 50)" font-family="Fira Code" font-size="12">
-         <!-- Line 1 -->
-         <text y="0" fill="#ff7b72">const</text> 
-         <text x="45" y="0" fill="#d2a8ff">User</text> 
-         <text x="80" y="0" fill="#c9d1d9">= {{</text>
-         
-         <!-- Line 2 -->
-         <text x="20" y="20" fill="#79c0ff">name:</text>
-         <text x="65" y="20" fill="#a5d6ff">"{d['name']}"</text>,
-         
-         <!-- Line 3 -->
-         <text x="20" y="40" fill="#79c0ff">activity:</text>
-         <text x="95" y="40" fill="#7ee787">"{d['line_1']} {d['line_2']}"</text>,
-         
-         <!-- Line 4 -->
-         <text x="20" y="60" fill="#79c0ff">ai_log:</text>
-         <text x="80" y="60" fill="#8b949e">"{msg}"</text><tspan class="cursor" fill="white">_</tspan>
-         
-         <!-- Close -->
-         <text y="80" fill="#c9d1d9">}}</text>
-      </g>
-      
-      <!-- Image right aligned -->
-      <image href="{d['avatar']}" x="380" y="45" width="80" height="80" rx="8" opacity="0.8"/>
-    </svg>"""
-
-# --- STYLE 4: PRO (Business Card) ---
-def render_pro(d, msg):
-    # This style uses System fonts for reliability, no imports
-    return f"""<svg width="420" height="130" viewBox="0 0 420 130" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-      <defs>
-        <clipPath id="sq"><rect width="80" height="80" rx="6"/></clipPath>
-      </defs>
-      
-      <!-- Clean Card -->
-      <rect x="2" y="2" width="416" height="126" rx="8" fill="white" stroke="#e1e4e8" stroke-width="1"/>
-      
-      <!-- Side Accent -->
-      <path d="M 10 10 L 10 120" stroke="{d['color']}" stroke-width="4" stroke-linecap="round"/>
-      
-      <!-- Avatar -->
-      <g transform="translate(30, 25)">
-         <image href="{d['avatar']}" width="80" height="80" clip-path="url(#sq)"/>
-         <rect width="80" height="80" rx="6" fill="none" stroke="rgba(0,0,0,0.1)"/>
-         <!-- Status Dot -->
-         <circle cx="80" cy="80" r="8" fill="{d['color']}" stroke="white" stroke-width="2"/>
-      </g>
-      
-      <!-- Text Info -->
-      <g transform="translate(130, 35)" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
-         <text y="0" font-weight="700" font-size="24" fill="#24292e">{d['name']}</text>
-         
-         <text y="28" font-size="12" fill="#586069" font-weight="600" style="text-transform:uppercase; letter-spacing:0.5px">
-            {d['line_1']}
-         </text>
-         <text y="44" font-size="12" fill="#586069">{d['line_2']}</text>
-         
-         <g transform="translate(0, 70)">
-            <rect width="250" height="1" fill="#eee"/>
-            <text y="15" font-size="10" fill="#999" font-style="italic">{msg}</text>
-         </g>
-      </g>
-    </svg>"""
-
-# --- ROUTER ---
-@app.route('/superbadge/<user_id>')
-def serve(user_id):
-    # 1. Capture Args
-    roast_mode = request.args.get('roastMode', 'false').lower() == 'true'
-    style = request.args.get('style', 'hyper').lower()
+    # Determine Logic
+    # If route is /superbadge/ID, infer logic. Else use /badge/discord|github/ID
+    target_data = None
     
-    # 2. Get Data
-    data = get_user_data(user_id)
-    if not data['valid']:
-        return Response('<svg><text>Error Fetching Data</text></svg>', mimetype="image/svg+xml")
-
-    # 3. AI
-    mode = "roast" if roast_mode else "normal"
-    msg = consult_gemini(data['full_status_text'], data['name'], mode, data['is_music'])
+    if mode == "user" and not key: key = mode # Fix flash URL logic if any
     
-    # 4. Render
-    if style == 'cute': svg = render_cute(data, msg)
-    elif style == 'terminal': svg = render_terminal(data, msg)
-    elif style == 'professional': svg = render_pro(data, msg)
-    else: svg = render_hyper(data, msg) # Default
+    # 1. Fetch
+    if mode == "discord" or (mode=="user" and len(str(key)) < 15):
+        # Invite Code
+        target_data = fetch_discord_invite(key)
+    elif mode == "github":
+        # Github User
+        target_data = fetch_github_user(key)
+    else:
+        # Default to Lanyard User ID
+        target_data = fetch_lanyard_user(key, args)
+
+    if not target_data:
+        return Response('<svg><text y="20">Error: Invalid ID or API Failure</text></svg>', mimetype="image/svg+xml")
+
+    # 2. AI
+    roast = args.get('roastMode', 'false').lower() == 'true'
+    ai_mode = "roast" if roast else "hud"
+    # Construct context string for AI
+    context_str = f"{target_data.get('line_1','')} {target_data.get('line_2','')}"
+    
+    msg = consult_gemini(context_str, target_data['name'], ai_mode, target_data.get('is_music', False))
+
+    # 3. Render
+    svg = render_svg(target_data, msg, args)
     
     return Response(svg, mimetype="image/svg+xml", headers={"Cache-Control": "no-cache"})
 
 @app.route('/')
-def home():
-    return "BADGE SYSTEM ACTIVE. Endpoints: /superbadge/[ID]?style=[hyper|cute|terminal|professional]&roastMode=[true|false]"
+def index():
+    return "CHILLAX ENGINE ONLINE"
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
