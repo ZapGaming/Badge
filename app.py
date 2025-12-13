@@ -3,29 +3,22 @@ import requests
 import os
 import html
 import time
-import datetime
 import google.generativeai as genai
 from flask import Flask, Response, request
 
 app = Flask(__name__)
 
-# ===========================
-#        CONFIGURATION
-# ===========================
+# --- CONFIG ---
 GOOGLE_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GOOGLE_API_KEY:
     genai.configure(api_key=GOOGLE_API_KEY)
 
 CACHE = {} 
-HEADERS = {'User-Agent': 'HyperBadge/Final-Fix-XML'}
+HEADERS = {'User-Agent': 'HyperBadge/Universal-v12-Fix'}
 EMPTY = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
 
-# ===========================
-#      HELPER FUNCTIONS
-# ===========================
-
+# --- HELPERS ---
 def get_base64(url):
-    """Safely converts remote images to Base64"""
     if not url: return EMPTY
     try:
         r = requests.get(url, headers=HEADERS, timeout=4)
@@ -36,17 +29,13 @@ def get_base64(url):
     return EMPTY
 
 def get_css(anim_enabled):
-    """Returns CSS blocks. CRITICAL FIX: Ampersands escaped as &amp;"""
-    
-    # === XML SAFE URL ===
-    # Notice & replaced with &amp;
-    base = "@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@800&amp;family=Rajdhani:wght@500;700&amp;family=Fredoka:wght@400;600&amp;family=Fira+Code:wght@500&amp;display=swap');"
+    base = "@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@800&family=Rajdhani:wght@500;700&family=Fredoka:wght@400;600&family=Fira+Code:wght@500&display=swap');"
     
     if str(anim_enabled).lower() == 'false':
         return base + " * { animation: none !important; transition: none !important; }"
     
     return base + """
-    .drift { animation: d 40s linear infinite; transform-origin: center; } 
+    .drift { animation: d 40s linear infinite; transform-origin: 240px 90px; } 
     @keyframes d { from{transform:rotate(0deg) scale(1.1)} to{transform:rotate(360deg) scale(1.1)} }
     
     .float { animation: f 6s ease-in-out infinite; } 
@@ -55,25 +44,19 @@ def get_css(anim_enabled):
     .pulse { animation: p 2s infinite; } 
     @keyframes p { 50%{opacity:0.5} }
     
-    .bob { animation: b 3s ease-in-out infinite; } 
-    @keyframes b { 50%{transform:translateY(-5px)} }
-    
-    .spin { animation: r 4s linear infinite; transform-origin: 50% 50%; } 
-    @keyframes r { to{transform:rotate(360deg)} }
-    
-    .blink { animation: k 1s step-end infinite; } 
-    @keyframes k { 50% { opacity: 0 } }
-    
     .scroll-bg { animation: s 20s linear infinite; }
     @keyframes s { from {transform:translateY(0)} to {transform:translateY(-40px)} }
+    
+    .scanline { animation: sl 4s linear infinite; }
+    @keyframes sl { 0% {transform:translateY(-100%)} 100% {transform:translateY(100%)} }
+    
+    .cursor { animation: b 1s step-end infinite; }
+    @keyframes b { 50% { opacity: 0 } }
     """
 
-# ===========================
-#        AI NEURAL CORE
-# ===========================
-
+# --- AI ENGINE ---
 def consult_gemini(status_text, user_name, mode, enabled, data_type):
-    # Completely hide AI if disabled
+    # Hide AI if disabled or no key
     if str(enabled).lower() == 'false': return None
     if not GOOGLE_API_KEY: return None 
     
@@ -86,11 +69,9 @@ def consult_gemini(status_text, user_name, mode, enabled, data_type):
         if mode == "roast":
             prompt = f"Roast '{user_name}' about '{status_text}'. Savage, uppercase, max 7 words."
         else:
-            # Type specific context
             context = "Activity"
             if data_type == "github": context = "GitHub Stats"
             if data_type == "discord": context = "Server Stats"
-            
             prompt = f"{context}: '{status_text}' for '{user_name}'. Sci-Fi HUD status update. Uppercase. Max 6 words."
 
         response = model.generate_content(prompt)
@@ -101,12 +82,8 @@ def consult_gemini(status_text, user_name, mode, enabled, data_type):
     except:
         return "ENCRYPTED"
 
-# ===========================
-#       DATA HARVESTERS
-# ===========================
-
+# --- DATA FETCH ---
 def fetch_data(key, type_mode, args):
-    """Master Fetcher"""
     try:
         # LANYARD (USER)
         if type_mode == 'user' or (type_mode == 'auto' and len(str(key)) > 15):
@@ -117,12 +94,10 @@ def fetch_data(key, type_mode, args):
             u = d['discord_user']
             status = d['discord_status']
             
-            # Global Display Name support
             show_display = args.get('showDisplayName','true').lower() == 'true'
             dname = u['global_name'] if show_display and u.get('global_name') else u['username']
             custom_idle = args.get('idleMessage', 'IDLE')
             
-            # Activity Logic
             l1, l2, col = "", "", "#555"
             is_music, art = False, None
             cols = {"online": "#00FF99", "idle": "#FFBB00", "dnd": "#FF4444", "offline": "#555", "spotify": "#1DB954"}
@@ -131,7 +106,6 @@ def fetch_data(key, type_mode, args):
                 l1 = f"🎵 {d['spotify']['song']}"
                 l2 = f"By {d['spotify']['artist']}"
                 col = cols['spotify']
-                # Add art to 'extra' for backgrounds
                 art = get_base64(d['spotify'].get('album_art_url'))
                 is_music = True
             else:
@@ -152,7 +126,6 @@ def fetch_data(key, type_mode, args):
                 "color": col, 
                 "avatar": get_base64(f"https://cdn.discordapp.com/avatars/{u['id']}/{u['avatar']}.png"),
                 "album_art": art, 
-                "is_music": is_music,
                 "id": u['id']
             }
 
@@ -167,10 +140,10 @@ def fetch_data(key, type_mode, args):
                 "l1": "REPOS", "l2": str(d['public_repos']),
                 "color": "#fff", 
                 "avatar": get_base64(d['avatar_url']),
-                "album_art": None, "is_music": False, "id": str(d['id'])
+                "album_art": None, "id": str(d['id'])
             }
 
-        # DISCORD INVITE
+        # DISCORD SERVER
         else:
             r = requests.get(f"https://discord.com/api/v10/invites/{key}?with_counts=true", headers=HEADERS, timeout=4)
             d = r.json()
@@ -182,20 +155,20 @@ def fetch_data(key, type_mode, args):
                 "l1": "MEMBERS", "l2": f"{d['approximate_member_count']:,}",
                 "color": "#5865F2", 
                 "avatar": get_base64(f"https://cdn.discordapp.com/icons/{g['id']}/{g['icon']}.png") if g.get('icon') else EMPTY,
-                "album_art": None, "is_music": False, "id": g['id']
+                "album_art": None, "id": g['id']
             }
     except:
         return None
 
 # ===========================
-#      STYLES
+#      STYLES (Renderers)
 # ===========================
 
 # 1. HYPER (Liquid Shader)
 def render_hyper(d, ai_msg, css, radius, bg):
     hex_path = "M50 0 L93.3 25 V75 L50 100 L6.7 75 V25 Z"
     
-    # Conditional AI Box
+    # Hide AI UI if no message (User disabled AI)
     ai_svg = ""
     if ai_msg:
         ai_svg = f"""
@@ -206,9 +179,9 @@ def render_hyper(d, ai_msg, css, radius, bg):
             </text>
         </g>"""
 
-    # Background Logic
+    # Background Logic (Album art or Default)
     if d['album_art']:
-        bg_layer = f'<image href="{d["album_art"]}" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" opacity="0.4" filter="url(#bl)"/><rect width="100%" height="100%" fill="black" opacity="0.3"/>'
+        bg_layer = f'<image href="{d["album_art"]}" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" opacity="0.4" filter="url(#bl)"/>'
     else:
         bg_layer = f'<g class="drift" opacity="0.4"><circle cx="20" cy="20" r="160" fill="{d["color"]}" filter="url(#liq)"/><circle cx="450" cy="160" r="140" fill="#5865F2" filter="url(#liq)"/></g>'
 
@@ -240,7 +213,7 @@ def render_hyper(d, ai_msg, css, radius, bg):
       <text x="470" y="170" text-anchor="end" class="m" font-size="8" fill="#555">UID: {d['id']}</text>
     </svg>"""
 
-# 2. CUTE COMPLEX (Pattern BG + Bounce)
+# 2. CUTE COMPLEX
 def render_cute(d, ai_msg, css, bg):
     c = d['color']
     ai_svg = ""
@@ -278,7 +251,7 @@ def render_cute(d, ai_msg, css, bg):
       <text x="430" y="50" font-size="24" class="bob">☁️</text>
     </svg>"""
 
-# 3. TERMINAL COMPLEX (Scanlines + VIM Status)
+# 3. TERMINAL COMPLEX
 def render_terminal(d, ai_msg, css, bg):
     ai_svg = ""
     if ai_msg:
@@ -318,18 +291,21 @@ def render_terminal(d, ai_msg, css, bg):
       <image href="{d['avatar']}" x="380" y="40" width="80" height="80" opacity="0.9" rx="4"/>
     </svg>"""
 
-# 4. PROFESSIONAL (Static)
+# 4. PROFESSIONAL
 def render_pro(d, msg, args):
     msg_html = f'<text y="90" font-size="10" fill="#999" font-style="italic">NOTE: {msg}</text>' if msg else ""
     return f"""<svg width="480" height="140" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
       <defs><clipPath id="s"><rect width="90" height="90" rx="4"/></clipPath></defs>
       <rect width="478" height="138" x="1" y="1" rx="4" fill="#FFFFFF" stroke="#e1e4e8"/>
       <rect width="6" height="138" x="1" y="1" rx="1" fill="{d['color']}"/>
-      <g transform="translate(30,25)"><image href="{d['avatar']}" width="90" height="90" clip-path="url(#s)"/></g>
-      <g transform="translate(140,40)" font-family="Arial, Helvetica, sans-serif">
-         <text y="0" font-weight="bold" font-size="24" fill="#333">{d['name']}</text>
-         <text y="30" font-size="11" font-weight="bold" fill="#586069">{d['l1']}</text>
-         <text y="45" font-size="11" fill="#586069">{d['l2']}</text>
+      <g transform="translate(30,25)">
+         <image href="{d['avatar']}" width="90" height="90" clip-path="url(#s)"/>
+         <rect width="90" height="90" rx="4" fill="none" stroke="rgba(0,0,0,0.1)"/>
+      </g>
+      <g transform="translate(140,35)" font-family="Arial, Helvetica, sans-serif">
+         <text y="0" font-weight="bold" font-size="22" fill="#24292e">{d['name']}</text>
+         <text y="28" font-size="11" font-weight="bold" fill="#586069">{d['l1']}</text>
+         <text y="42" font-size="11" fill="#586069">{d['l2']}</text>
          <line x1="0" y1="70" x2="300" y2="70" stroke="#eee"/>
          {msg_html}
       </g>
@@ -342,33 +318,31 @@ def render_pro(d, msg, args):
 @app.route('/superbadge/<key>')
 @app.route('/badge/<mode>/<key>')
 def handler(key, mode="auto"):
-    # 1. SETUP
     args = request.args
     target_mode = mode
     if mode == "auto":
         target_mode = 'user' if (key.isdigit() and len(str(key)) > 15) else 'discord'
         
-    # 2. DATA
     data = fetch_data(key, target_mode, args)
     if not data: return Response('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="50"><rect width="100%" height="100%" fill="black"/><text x="10" y="30" fill="red" font-family="sans-serif">DATA API ERROR</text></svg>', mimetype="image/svg+xml")
 
-    # 3. SETTINGS
+    # SETTINGS
     anim_on = args.get('animations', 'true')
     ai_on = args.get('aifeatures', 'true')
     roast = args.get('roastMode', 'false').lower() == 'true'
     style = args.get('style', 'hyper').lower()
     
+    # Defaults
     bg = args.get('bg', '09090b').replace('#','')
-    rad = args.get('borderRadius', '20').replace('px', '')
+    radius = args.get('borderRadius', '20').replace('px', '')
 
-    # 4. AI LOGIC (FIXED)
+    # AI
     ai_role = "roast" if roast else "hud"
-    full_text = f"{data.get('l1','')} {data.get('l2','')}"
-    
-    # Correct 5-argument call to prevent TypeError
-    msg = consult_gemini(full_text, data['name'], ai_role, ai_on, data.get('type'))
+    context = f"{data['l1']} {data['l2']}"
+    # Corrected Function Call
+    msg = consult_gemini(context, data['name'], ai_role, ai_on, data.get('type'))
 
-    # 5. RENDER
+    # RENDER
     css = get_css(anim_on)
     
     if style == 'cute':
@@ -378,7 +352,7 @@ def handler(key, mode="auto"):
     elif style == 'pro' or style == 'professional':
         svg = render_pro(data, msg, args)
     else:
-        # Default Hyper Style
+        # Default Hyper
         svg = render_hyper(data, msg, css, radius, bg)
 
     return Response(svg, mimetype="image/svg+xml", headers={"Cache-Control": "no-cache, max-age=0"})
