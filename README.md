@@ -1,4 +1,4 @@
-# ⚡ Chillax HyperBadge
+# ⚡ Zandy HyperBadge
 
 <div align="center">
 
@@ -133,5 +133,5 @@ To show Discord User status, you **must** be in the Lanyard Discord Server.
 ---
 
 <div align="center">
-  <sub>HyperBadge V13 // Chillax Development</sub>
+  <sub>HyperBadge V17 // Zandy</sub>
 </div>
