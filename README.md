@@ -24,7 +24,7 @@ HyperBadge is a high-performance Python application that generates **real-time, 
 It serves as a single endpoint for all your status needs:
 1.  **Discord User:** Live Activity (Games, Spotify, Coding) with AI status commentary.
 2.  **Discord Server:** Live Member counts and Online counts (sanitized and crash-proof).
-3.  **GitHub:** Repo Statistics (Star/Fork ranking) or User Profile stats.
+3.  **GitHub:** Repo Statistics (Star/Fork ranking) or User Profile stats. (not working atm)
 
 ### ✨ Features
 *   **🎨 7 Visual Engines:** `Chillax`, `Hyper`, `Spotify`, `EasterEgg`, `Cute`, `Terminal`, `Professional`.
@@ -51,7 +51,7 @@ The system automatically detects if you are asking for a User, a Server, or a Re
 | **Discord User** | `User ID` | `.../superbadge/1173155...` |
 | **Discord Server** | `Invite Code` | `.../superbadge/DrfX6286kF` |
 | **GitHub User** | `Username` | `.../superbadge/torvalds` |
-| **GitHub Repo** | `User/Repo` | `.../superbadge/torvalds/linux` |
+| **GitHub Repo** (not working atm) | `User/Repo` | `.../superbadge/torvalds/linux` |
 
 ---
 
