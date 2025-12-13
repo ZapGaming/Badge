@@ -14,11 +14,13 @@ if GOOGLE_API_KEY:
     genai.configure(api_key=GOOGLE_API_KEY)
 
 CACHE = {} 
-HEADERS = {'User-Agent': 'HyperBadge/Universal-v12-Fix'}
+# Use a specific UA to avoid bot detection
+HEADERS = {'User-Agent': 'Mozilla/5.0 (compatible; HyperBadge/v12.0)'}
 EMPTY = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
 
 # --- HELPERS ---
 def get_base64(url):
+    """Safely converts remote images to Base64."""
     if not url: return EMPTY
     try:
         r = requests.get(url, headers=HEADERS, timeout=4)
@@ -29,8 +31,17 @@ def get_base64(url):
     return EMPTY
 
 def get_css(anim_enabled):
-    base = "@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@800&family=Rajdhani:wght@500;700&family=Fredoka:wght@400;600&family=Fira+Code:wght@500&display=swap');"
+    """
+    Returns CSS blocks.
+    CRITICAL XML FIX: All '&' in the Google Fonts URL must be replaced with '&amp;'
+    """
     
+    # Notice the &amp; separating the font families
+    font_url = "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@800&amp;family=Rajdhani:wght@500;700&amp;family=Fredoka:wght@400;600&amp;family=Fira+Code:wght@500&amp;display=swap"
+    
+    base = f"@import url('{font_url}');"
+    
+    # Disable animations if requested
     if str(anim_enabled).lower() == 'false':
         return base + " * { animation: none !important; transition: none !important; }"
     
@@ -54,9 +65,9 @@ def get_css(anim_enabled):
     @keyframes b { 50% { opacity: 0 } }
     """
 
-# --- AI ENGINE ---
+# --- AI CORE ---
 def consult_gemini(status_text, user_name, mode, enabled, data_type):
-    # Hide AI if disabled or no key
+    # Completely hide AI if disabled
     if str(enabled).lower() == 'false': return None
     if not GOOGLE_API_KEY: return None 
     
@@ -80,9 +91,9 @@ def consult_gemini(status_text, user_name, mode, enabled, data_type):
         CACHE[key] = text
         return text
     except:
-        return "ENCRYPTED"
+        return "DATA STREAM ENCRYPTED"
 
-# --- DATA FETCH ---
+# --- DATA FETCHING ---
 def fetch_data(key, type_mode, args):
     try:
         # LANYARD (USER)
@@ -129,7 +140,7 @@ def fetch_data(key, type_mode, args):
                 "id": u['id']
             }
 
-        # GITHUB
+        # GITHUB PROFILE
         elif type_mode == 'github':
             r = requests.get(f"https://api.github.com/users/{key}", headers=HEADERS, timeout=4)
             d = r.json()
@@ -143,7 +154,7 @@ def fetch_data(key, type_mode, args):
                 "album_art": None, "id": str(d['id'])
             }
 
-        # DISCORD SERVER
+        # DISCORD INVITE
         else:
             r = requests.get(f"https://discord.com/api/v10/invites/{key}?with_counts=true", headers=HEADERS, timeout=4)
             d = r.json()
@@ -161,14 +172,13 @@ def fetch_data(key, type_mode, args):
         return None
 
 # ===========================
-#      STYLES (Renderers)
+#      RENDER ENGINES
 # ===========================
 
 # 1. HYPER (Liquid Shader)
 def render_hyper(d, ai_msg, css, radius, bg):
     hex_path = "M50 0 L93.3 25 V75 L50 100 L6.7 75 V25 Z"
     
-    # Hide AI UI if no message (User disabled AI)
     ai_svg = ""
     if ai_msg:
         ai_svg = f"""
@@ -179,7 +189,7 @@ def render_hyper(d, ai_msg, css, radius, bg):
             </text>
         </g>"""
 
-    # Background Logic (Album art or Default)
+    # Background Logic
     if d['album_art']:
         bg_layer = f'<image href="{d["album_art"]}" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" opacity="0.4" filter="url(#bl)"/>'
     else:
@@ -291,7 +301,7 @@ def render_terminal(d, ai_msg, css, bg):
       <image href="{d['avatar']}" x="380" y="40" width="80" height="80" opacity="0.9" rx="4"/>
     </svg>"""
 
-# 4. PROFESSIONAL
+# 4. PROFESSIONAL (Static)
 def render_pro(d, msg, args):
     msg_html = f'<text y="90" font-size="10" fill="#999" font-style="italic">NOTE: {msg}</text>' if msg else ""
     return f"""<svg width="480" height="140" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
@@ -303,7 +313,7 @@ def render_pro(d, msg, args):
          <rect width="90" height="90" rx="4" fill="none" stroke="rgba(0,0,0,0.1)"/>
       </g>
       <g transform="translate(140,35)" font-family="Arial, Helvetica, sans-serif">
-         <text y="0" font-weight="bold" font-size="22" fill="#24292e">{d['name']}</text>
+         <text y="0" font-weight="bold" font-size="22" fill="#333">{d['name']}</text>
          <text y="28" font-size="11" font-weight="bold" fill="#586069">{d['l1']}</text>
          <text y="42" font-size="11" fill="#586069">{d['l2']}</text>
          <line x1="0" y1="70" x2="300" y2="70" stroke="#eee"/>
@@ -318,31 +328,33 @@ def render_pro(d, msg, args):
 @app.route('/superbadge/<key>')
 @app.route('/badge/<mode>/<key>')
 def handler(key, mode="auto"):
+    # 1. SETUP
     args = request.args
     target_mode = mode
     if mode == "auto":
         target_mode = 'user' if (key.isdigit() and len(str(key)) > 15) else 'discord'
         
+    # 2. DATA
     data = fetch_data(key, target_mode, args)
     if not data: return Response('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="50"><rect width="100%" height="100%" fill="black"/><text x="10" y="30" fill="red" font-family="sans-serif">DATA API ERROR</text></svg>', mimetype="image/svg+xml")
 
-    # SETTINGS
+    # 3. SETTINGS
     anim_on = args.get('animations', 'true')
     ai_on = args.get('aifeatures', 'true')
     roast = args.get('roastMode', 'false').lower() == 'true'
     style = args.get('style', 'hyper').lower()
     
-    # Defaults
     bg = args.get('bg', '09090b').replace('#','')
     radius = args.get('borderRadius', '20').replace('px', '')
 
-    # AI
+    # 4. AI LOGIC
     ai_role = "roast" if roast else "hud"
-    context = f"{data['l1']} {data['l2']}"
-    # Corrected Function Call
-    msg = consult_gemini(context, data['name'], ai_role, ai_on, data.get('type'))
+    full_text = f"{data.get('l1','')} {data.get('l2','')}"
+    
+    # Send all 5 required arguments
+    msg = consult_gemini(full_text, data['name'], ai_role, ai_on, data.get('type'))
 
-    # RENDER
+    # 5. RENDER
     css = get_css(anim_on)
     
     if style == 'cute':
