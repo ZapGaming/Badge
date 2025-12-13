@@ -32,13 +32,13 @@ It tracks your **Discord Activity** (Games, VS Code, Spotify) or **GitHub Stats*
 
 ## 🛠️ Usage Guide
 
-Base URL: `https://your-app-name.onrender.com`
+Base URL: `https://badge-oq5l.onrender.com`
 
 ### 1. The "Magic" Link (Auto-Detect)
 Automatically detects if you provided a User ID (Lanyard) or an Invite Code.
 
 ```markdown
-![My Status](https://your-app-name.onrender.com/superbadge/YOUR_DISCORD_USER_ID)
+![My Status](https://badge-oq5l.onrender.com/superbadge/YOUR_DISCORD_USER_ID)
 ```
 
 ### 2. Specific Endpoints
