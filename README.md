@@ -1,4 +1,4 @@
-# ⚡ Chillax HyperBadge
+# ⚡ Zandy HyperBadge
 
 <div align="center">
 
@@ -117,5 +117,5 @@ To display **User Activity** (Games, Music, VS Code), you must be a member of th
 ---
 
 <div align="center">
-  <sub><b>Chillax Development</b> // Built by WQ</sub>
+  <sub><b>Zandy HyperBadge</b> // Built by Zandy</sub>
 </div>
