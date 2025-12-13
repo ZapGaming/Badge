@@ -3,21 +3,19 @@ import requests
 import os
 import html
 import time
-import random
-import datetime
 import google.generativeai as genai
 from flask import Flask, Response, request
 
 app = Flask(__name__)
 
-# --- CONFIGURATION ---
+# --- CONFIG ---
 GOOGLE_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GOOGLE_API_KEY:
     genai.configure(api_key=GOOGLE_API_KEY)
 
-HEADERS = {'User-Agent': 'HyperBadge/Universal-v11'}
-EMPTY = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
 CACHE = {} 
+HEADERS = {'User-Agent': 'HyperBadge/Final-Fix'}
+EMPTY = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
 
 # --- HELPERS ---
 def get_base64(url):
@@ -31,16 +29,14 @@ def get_base64(url):
     return EMPTY
 
 def get_css(anim_enabled):
-    """Global CSS definitions"""
     base = "@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@800&family=Rajdhani:wght@500;700&family=Fredoka:wght@400;600&family=Fira+Code:wght@500&display=swap');"
     
     if str(anim_enabled).lower() == 'false':
         return base + " * { animation: none !important; transition: none !important; }"
     
     return base + """
-    /* Universal Animations */
-    .drift { animation: d 30s linear infinite; transform-origin: center; } 
-    @keyframes d { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+    .drift { animation: d 40s linear infinite; transform-origin: 240px 90px; } 
+    @keyframes d { from{transform:rotate(0deg) scale(1.1)} to{transform:rotate(360deg) scale(1.1)} }
     
     .float { animation: f 6s ease-in-out infinite; } 
     @keyframes f { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-4px)} }
@@ -48,41 +44,50 @@ def get_css(anim_enabled):
     .pulse { animation: p 2s infinite; } 
     @keyframes p { 50%{opacity:0.5} }
     
-    .cloud-move { animation: cm 20s linear infinite; }
-    @keyframes cm { from {transform:translateX(0)} to {transform:translateX(-50px)} }
+    .scroll-bg { animation: s 20s linear infinite; }
+    @keyframes s { from {transform:translateY(0)} to {transform:translateY(-40px)} }
     
     .scanline { animation: sl 4s linear infinite; }
     @keyframes sl { 0% {transform:translateY(-100%)} 100% {transform:translateY(100%)} }
+    
+    .cursor { animation: b 1s step-end infinite; }
+    @keyframes b { 50% { opacity: 0 } }
     """
 
-# --- AI ENGINE ---
-def consult_gemini(status_text, user_name, mode, enabled):
-    # Logic Change: Return None if disabled so Render knows to hide the UI
+# --- AI CORE (FIXED SIGNATURE) ---
+def consult_gemini(status_text, user_name, mode, enabled, data_type):
+    # Completely hide AI if disabled
     if str(enabled).lower() == 'false': return None
-    if not GOOGLE_API_KEY: return None # Don't show anything if key missing
+    if not GOOGLE_API_KEY: return None 
     
     key = f"AI_{user_name}_{status_text}_{mode}"
     if key in CACHE: return CACHE[key]
 
     try:
         model = genai.GenerativeModel('gemini-pro')
+        
         if mode == "roast":
-            task = f"Roast '{user_name}' about '{status_text}'. Savage, uppercase, max 7 words."
+            prompt = f"Roast '{user_name}' about '{status_text}'. Savage, uppercase, max 7 words."
         else:
-            task = f"HUD status for '{user_name}': '{status_text}'. Technical, uppercase, max 6 words."
+            # Type specific context
+            context = "Activity"
+            if data_type == "github": context = "GitHub Stats"
+            if data_type == "discord": context = "Server Stats"
+            
+            prompt = f"{context}: '{status_text}' for '{user_name}'. Sci-Fi HUD status update. Uppercase. Max 6 words."
 
-        response = model.generate_content(task)
-        clean_text = html.escape(response.text.strip().replace('"','').replace("'", "")).upper()[:50]
-        CACHE[key] = clean_text
-        return clean_text
+        response = model.generate_content(prompt)
+        text = html.escape(response.text.strip().replace('"','').replace("'", "")).upper()[:50]
+        
+        CACHE[key] = text
+        return text
     except:
-        return "DATA ENCRYPTED"
+        return "ENCRYPTED"
 
-# --- DATA FETCHING ---
+# --- FETCH DATA ---
 def fetch_data(key, type_mode, args):
-    """Master Fetcher"""
     try:
-        # LANYARD (USER)
+        # LANYARD
         if type_mode == 'user' or (type_mode == 'auto' and len(str(key)) > 15):
             r = requests.get(f"https://api.lanyard.rest/v1/users/{key}", headers=HEADERS, timeout=4)
             d = r.json().get('data', {})
@@ -91,73 +96,85 @@ def fetch_data(key, type_mode, args):
             u = d['discord_user']
             status = d['discord_status']
             
-            # Global Display Name support
-            show_display = args.get('showDisplayName','true').lower() == 'true'
-            name = u['global_name'] if show_display and u.get('global_name') else u['username']
+            # Args
+            dname = u['global_name'] if (args.get('showDisplayName')=='true' and u.get('global_name')) else u['username']
             custom_idle = args.get('idleMessage', 'IDLE')
             
-            # Activity Logic
-            l1, l2 = "", ""
+            l1, l2, col = "", "", "#555"
+            is_music, art = False, None
             cols = {"online": "#00FF99", "idle": "#FFBB00", "dnd": "#FF4444", "offline": "#555", "spotify": "#1DB954"}
             
             if d.get('spotify'):
                 l1 = f"🎵 {d['spotify']['song']}"
                 l2 = f"By {d['spotify']['artist']}"
-                color = cols['spotify']
-                # Add art to 'extra' for backgrounds
-                extra_img = get_base64(d['spotify'].get('album_art_url'))
+                col = cols['spotify']
+                art = get_base64(d['spotify'].get('album_art_url'))
+                is_music = True
             else:
-                color = cols.get(status, "#555")
-                extra_img = None
-                
-                # Check Games/Status
+                col = cols.get(status, "#555")
                 found = False
                 for act in d.get('activities', []):
                     if act['type'] == 0: l1="PLAYING:"; l2=act['name']; found=True; break
                     if act['type'] == 4: l1="NOTE:"; l2=act.get('state',''); found=True; break
-                    if act['type'] == 2: l1="MEDIA:"; l2="Streaming"; found=True; break
+                    if act['type'] == 2: l1="MEDIA:"; l2="Stream"; found=True; break
                 
                 if not found:
                     l1="STATUS:"; l2="ONLINE" if status=="online" else custom_idle.upper()
 
             return {
-                "name": html.escape(name),
-                "l1": html.escape(l1)[:25], 
-                "l2": html.escape(l2)[:30],
-                "color": color, 
+                "type": "user",
+                "name": html.escape(dname),
+                "l1": html.escape(l1)[:25], "l2": html.escape(l2)[:30],
+                "color": col, 
                 "avatar": get_base64(f"https://cdn.discordapp.com/avatars/{u['id']}/{u['avatar']}.png"),
-                "bg_image": extra_img, # Album art or None
+                "album_art": art, 
                 "id": u['id']
             }
 
-        # DISCORD SERVER (Invite Code)
+        # GITHUB
+        elif type_mode == 'github':
+            r = requests.get(f"https://api.github.com/users/{key}", headers=HEADERS, timeout=4)
+            d = r.json()
+            if 'login' not in d: return None
+            return {
+                "type": "github",
+                "name": html.escape(d['login']),
+                "l1": "REPOS", "l2": str(d['public_repos']),
+                "color": "#fff", 
+                "avatar": get_base64(d['avatar_url']),
+                "album_art": None, "id": str(d['id'])
+            }
+
+        # DISCORD INVITE
         else:
             r = requests.get(f"https://discord.com/api/v10/invites/{key}?with_counts=true", headers=HEADERS, timeout=4)
             d = r.json()
-            if r.status_code != 200: return None
+            g = d.get('guild')
+            if not g: return None
             return {
-                "name": html.escape(d['guild']['name']),
+                "type": "discord",
+                "name": html.escape(g['name']),
                 "l1": "MEMBERS", "l2": f"{d['approximate_member_count']:,}",
                 "color": "#5865F2", 
-                "avatar": get_base64(f"https://cdn.discordapp.com/icons/{d['guild']['id']}/{d['guild']['icon']}.png") if d['guild'].get('icon') else EMPTY,
-                "bg_image": None,
-                "id": d['guild']['id']
+                "avatar": get_base64(f"https://cdn.discordapp.com/icons/{g['id']}/{g['icon']}.png") if g.get('icon') else EMPTY,
+                "album_art": None, "id": g['id']
             }
     except:
         return None
 
 # ===========================
-#      RENDER ENGINES
+#      STYLES
 # ===========================
 
-def render_hyper(d, ai_msg, css, bg, rad):
-    """Glassmorphism / Liquid / Modern"""
+# 1. HYPER (Liquid Shader)
+def render_hyper(d, ai_msg, css, radius, bg):
+    hex_path = "M50 0 L93.3 25 V75 L50 100 L6.7 75 V25 Z"
     
-    # AI Visibility Logic
-    ai_html = ""
+    # Conditional AI Box
+    ai_svg = ""
     if ai_msg:
-        ai_html = f"""
-        <g transform="translate(145,115)" class="float" style="animation-delay:0.5s">
+        ai_svg = f"""
+        <g transform="translate(145,120)" class="float" style="animation-delay:0.5s">
             <rect width="310" height="35" rx="6" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.1)"/>
             <text x="15" y="23" font-family="Rajdhani" font-size="13" fill="#E0E0FF">
                <tspan fill="#5865F2" font-weight="bold">AI //</tspan> {ai_msg}<tspan class="pulse">_</tspan>
@@ -165,188 +182,171 @@ def render_hyper(d, ai_msg, css, bg, rad):
         </g>"""
 
     # Background Logic
-    if d['bg_image']:
-        bg_layer = f'<image href="{d["bg_image"]}" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" opacity="0.4" filter="url(#bl)"/>'
+    if d['album_art']:
+        bg_layer = f'<image href="{d["album_art"]}" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" opacity="0.4" filter="url(#bl)"/><rect width="100%" height="100%" fill="black" opacity="0.3"/>'
     else:
         bg_layer = f'<g class="drift" opacity="0.4"><circle cx="20" cy="20" r="160" fill="{d["color"]}" filter="url(#liq)"/><circle cx="450" cy="160" r="140" fill="#5865F2" filter="url(#liq)"/></g>'
 
     return f"""<svg width="480" height="180" viewBox="0 0 480 180" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
-      <defs><style>{css}</style>
-      <clipPath id="cp"><rect width="480" height="180" rx="{rad}"/></clipPath>
-      <clipPath id="hc"><path d="M50 0 L93.3 25 V75 L50 100 L6.7 75 V25 Z"/></clipPath>
+      <defs><style>{css}
+      .u {{ font-family: 'Rajdhani', sans-serif; }} .m {{ font-family: 'JetBrains Mono', monospace; }}</style>
       <filter id="liq"><feTurbulence type="fractalNoise" baseFrequency="0.015"/><feDisplacementMap in="SourceGraphic" scale="30"/></filter>
       <filter id="bl"><feGaussianBlur stdDeviation="10"/></filter>
+      <clipPath id="cc"><rect width="480" height="180" rx="{radius}"/></clipPath>
+      <clipPath id="hc"><path d="{hex_path}"/></clipPath>
       </defs>
-      <rect width="100%" height="100%" rx="{rad}" fill="#{bg}"/>
-      <g clip-path="url(#cp)">{bg_layer}<rect width="100%" height="100%" fill="black" opacity="0.3"/></g>
+      
+      <rect width="100%" height="100%" rx="{radius}" fill="#{bg}"/>
+      <g clip-path="url(#cc)">{bg_layer}<rect width="100%" height="100%" fill="black" opacity="0.1"/></g>
       
       <g transform="translate(25,40)">
-         <path d="M50 0 L93.3 25 V75 L50 100 L6.7 75 V25 Z" fill="none" stroke="{d['color']}" stroke-width="3"/>
+         <path d="{hex_path}" fill="{d['color']}" opacity="0.2" transform="translate(0,3)"/>
          <g clip-path="url(#hc)"><image href="{d['avatar']}" width="100" height="100"/></g>
+         <path d="{hex_path}" fill="none" stroke="{d['color']}" stroke-width="3"/>
       </g>
       
       <g transform="translate(145,55)" class="float">
-         <text y="0" font-family="Rajdhani" font-weight="700" font-size="30" fill="white" style="text-shadow:0 4px 10px rgba(0,0,0,0.5)">{d['name'].upper()}</text>
-         <text y="25" font-family="JetBrains Mono" font-size="12" fill="{d['color']}">>> {d['l1']}</text>
-         <text y="42" font-family="JetBrains Mono" font-size="11" fill="#ccc">{d['l2']}</text>
+         <text y="0" class="u" font-size="30" font-weight="700" fill="white" style="text-shadow:0 4px 10px rgba(0,0,0,0.5)">{d['name'].upper()}</text>
+         <text y="25" class="m" font-size="12" fill="{d['color']}">>> {d['l1']}</text>
+         <text y="42" class="m" font-size="11" fill="#ccc">{d['l2']}</text>
       </g>
       
-      {ai_html}
-      <text x="470" y="170" text-anchor="end" font-family="JetBrains Mono" font-size="8" fill="#555" opacity="0.8">UID: {d['id']}</text>
+      {ai_svg}
+      <text x="470" y="170" text-anchor="end" class="m" font-size="8" fill="#555">UID: {d['id']}</text>
     </svg>"""
 
+# 2. CUTE COMPLEX (Pattern BG + Bounce)
 def render_cute(d, ai_msg, css, bg):
-    # COMPLEX CUTE: Patterns + Floating Decor
-    ai_html = ""
+    c = d['color']
+    ai_svg = ""
     if ai_msg:
-        ai_html = f"""<g transform="translate(0,50)" class="bob">
-            <rect width="280" height="30" rx="15" fill="white" opacity="0.8" stroke="{d['color']}" stroke-width="1"/>
+        ai_svg = f"""<g transform="translate(0,60)" class="bob">
+            <rect width="280" height="30" rx="15" fill="white" opacity="0.8" stroke="{c}" stroke-width="1"/>
             <text x="15" y="19" font-family="Fredoka" font-size="11" fill="#888">🐰 {ai_msg.capitalize()}</text>
         </g>"""
 
-    return f"""<svg width="480" height="160" viewBox="0 0 480 160" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    return f"""<svg width="480" height="180" viewBox="0 0 480 180" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
       <defs><style>{css}</style>
-      <pattern id="dot" width="20" height="20" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="2" fill="{d['color']}" opacity="0.2"/></pattern>
-      <clipPath id="cc"><circle cx="60" cy="60" r="50"/></clipPath></defs>
+      <pattern id="heart" width="40" height="40" patternUnits="userSpaceOnUse">
+         <text x="0" y="20" font-size="10" opacity="0.1" fill="{c}">❤</text>
+         <text x="20" y="40" font-size="10" opacity="0.1" fill="{c}">❤</text>
+      </pattern>
+      <clipPath id="cr"><circle cx="65" cy="65" r="55"/></clipPath>
+      </defs>
       
-      <rect width="480" height="160" rx="30" fill="#FFFAFA"/>
-      <!-- Animated Cloud BG -->
-      <g class="cloud-move"><rect width="600" height="160" fill="url(#dot)"/></g>
+      <rect width="480" height="180" rx="30" fill="#FFFAFA"/>
+      <rect width="100%" height="100%" fill="url(#heart)" class="scroll-bg"/>
+      <rect x="5" y="5" width="470" height="170" rx="25" fill="none" stroke="{c}" stroke-width="4" stroke-dasharray="15 10" opacity="0.4"/>
       
-      <rect x="5" y="5" width="470" height="150" rx="25" fill="none" stroke="{d['color']}" stroke-width="4" stroke-dasharray="15 10" opacity="0.3"/>
-      
-      <g transform="translate(20,20)">
-         <circle cx="60" cy="60" r="55" fill="{d['color']}"/>
-         <circle cx="60" cy="60" r="50" fill="white"/>
-         <image href="{d['avatar']}" width="120" height="120" clip-path="url(#cc)"/>
+      <g transform="translate(25,25)">
+         <circle cx="65" cy="65" r="60" fill="{c}"/>
+         <circle cx="65" cy="65" r="55" fill="white"/>
+         <image href="{d['avatar']}" width="130" height="130" clip-path="url(#cr)"/>
       </g>
       
-      <g transform="translate(150,45)">
-         <text y="0" font-family="Fredoka" font-weight="600" font-size="28" fill="#555">{d['name']}</text>
-         <text y="25" font-family="Fredoka" font-size="13" fill="{d['color']}">✨ {d['l1']} {d['l2']}</text>
-         {ai_html}
+      <g transform="translate(170,55)">
+         <text y="0" font-family="Fredoka" font-weight="600" font-size="30" fill="#555">{d['name']}</text>
+         <rect y="10" width="220" height="25" rx="12" fill="#F0F0F0"/>
+         <text x="10" y="26" font-family="Fredoka" font-size="12" fill="{c}">✨ {d['l1']} {d['l2']}</text>
+         {ai_svg}
       </g>
-      
-      <!-- Decor -->
-      <text x="430" y="40" font-size="24" class="bob">☁️</text>
-      <text x="400" y="130" font-size="18" class="bob" style="animation-delay:1s">💖</text>
+      <text x="430" y="50" font-size="24" class="bob">☁️</text>
     </svg>"""
 
+# 3. TERMINAL COMPLEX (Scanlines + VIM Status)
 def render_terminal(d, ai_msg, css, bg):
-    # COMPLEX TERMINAL: Scanlines + Line Numbers + Syntax Highlight
-    ai_line = ""
+    ai_svg = ""
     if ai_msg:
-        ai_line = f"""
-        <text x="15" y="90" font-family="Fira Code" font-size="12" fill="#569CD6">ai.query</text>
-        <text x="75" y="90" font-family="Fira Code" font-size="12" fill="#D4D4D4">(</text>
-        <text x="82" y="90" font-family="Fira Code" font-size="12" fill="#CE9178">"USER_STATS"</text>
-        <text x="175" y="90" font-family="Fira Code" font-size="12" fill="#D4D4D4">)</text>
-        <text x="15" y="110" font-family="Fira Code" font-size="12" fill="#6A9955">// {ai_msg}<tspan class="blink">_</tspan></text>
-        """
+        ai_svg = f"""<text x="15" y="100" fill="#569CD6">ai.query</text><text x="70" y="100" fill="#CE9178">("{d['name']}")</text>
+        <text x="15" y="120" fill="#6A9955">// {ai_msg}<tspan class="cursor">_</tspan></text>"""
 
-    return f"""<svg width="480" height="160" viewBox="0 0 480 160" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    return f"""<svg width="480" height="180" viewBox="0 0 480 180" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
       <defs><style>{css}</style>
-      <pattern id="lines" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="1" fill="#000" opacity="0.3"/></pattern>
+      <pattern id="sl" width="4" height="4" patternUnits="userSpaceOnUse"><rect width="4" height="1" fill="black" opacity="0.3"/></pattern>
       </defs>
       
       <rect width="100%" height="100%" rx="6" fill="#1e1e1e"/>
-      <rect width="100%" height="25" rx="6" fill="#252526"/>
-      <rect y="10" width="100%" height="15" fill="#252526"/> <!-- Hide top round corners for header -->
+      <rect width="100%" height="100%" fill="url(#sl)" pointer-events="none"/>
       
+      <!-- Top Bar -->
+      <rect width="100%" height="25" fill="#252526"/>
       <circle cx="20" cy="12" r="5" fill="#ff5f56"/>
       <circle cx="40" cy="12" r="5" fill="#ffbd2e"/>
       <circle cx="60" cy="12" r="5" fill="#27c93f"/>
-      <text x="240" y="17" text-anchor="middle" font-family="Fira Code" font-size="10" fill="#888">status.json</text>
+      <text x="240" y="17" text-anchor="middle" font-family="Fira Code" font-size="10" fill="#888">bash — 80x24</text>
       
-      <g transform="translate(10, 30)">
-         <!-- Line Numbers -->
-         <text x="0" y="20" font-family="Fira Code" font-size="10" fill="#555">1</text>
-         <text x="0" y="45" font-family="Fira Code" font-size="10" fill="#555">2</text>
+      <g transform="translate(15, 45)" font-family="Fira Code" font-size="12">
+         <text y="0" fill="#C586C0">const</text> <text x="40" y="0" fill="#4FC1FF">usr</text> <text x="65" y="0" fill="#D4D4D4">=</text> 
+         <text x="80" y="0" fill="#CE9178">"{d['name']}"</text>
          
-         <g transform="translate(20, 0)">
-            <text y="20" font-family="Fira Code" font-size="12" fill="#9CDCFE">"user"</text>
-            <text y="20" x="45" font-family="Fira Code" font-size="12" fill="#D4D4D4">: </text>
-            <text y="20" x="60" font-family="Fira Code" font-size="12" fill="#CE9178">"{d['name']}"</text>
-            
-            <text y="45" font-family="Fira Code" font-size="12" fill="#9CDCFE">"status"</text>
-            <text y="45" x="60" font-family="Fira Code" font-size="12" fill="#D4D4D4">: </text>
-            <text y="45" x="75" font-family="Fira Code" font-size="12" fill="{d['color']}">"{d['l1']} {d['l2']}"</text>
-         </g>
+         <text y="20" fill="#9CDCFE">usr.status</text> <text x="75" y="20" fill="#D4D4D4">=</text> 
+         <text x="90" y="20" fill="#B5CEA8">"{d['l1']} {d['l2']}"</text>
          
-         {ai_line}
+         {ai_svg}
       </g>
       
-      <!-- Scanline Overlay -->
-      <rect width="100%" height="100%" fill="url(#lines)" opacity="0.2" pointer-events="none"/>
-      <rect width="100%" height="2" fill="rgba(255,255,255,0.1)" class="scanline" pointer-events="none"/>
+      <!-- Vim Bottom Bar -->
+      <rect y="160" width="100%" height="20" fill="#5865F2"/>
+      <text x="10" y="173" font-family="Fira Code" font-size="10" fill="white" font-weight="bold">NORMAL</text>
+      <text x="470" y="173" text-anchor="end" font-family="Fira Code" font-size="10" fill="white">{d['type'].upper()}</text>
       
-      <!-- Avatar Sticker -->
-      <image href="{d['avatar']}" x="390" y="40" width="70" height="70" opacity="0.9" rx="5"/>
+      <image href="{d['avatar']}" x="380" y="40" width="80" height="80" opacity="0.9" rx="4"/>
     </svg>"""
 
-def render_pro(d, msg):
-    # Static Clean Business Style
-    msg_html = f'<text y="85" font-family="Arial" font-size="10" fill="#888" font-style="italic">NOTE: {msg}</text>' if msg else ""
-    return f"""<svg width="480" height="130" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+# 4. PROFESSIONAL (Static)
+def render_pro(d, msg, args):
+    msg_html = f'<text y="90" font-size="10" fill="#999" font-style="italic">NOTE: {msg}</text>' if msg else ""
+    return f"""<svg width="480" height="140" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
       <defs><clipPath id="s"><rect width="90" height="90" rx="4"/></clipPath></defs>
-      <rect width="478" height="128" x="1" y="1" rx="4" fill="#FFFFFF" stroke="#e1e4e8"/>
-      <rect width="6" height="128" x="1" y="1" rx="1" fill="{d['color']}"/>
-      <g transform="translate(30,25)">
-         <image href="{d['avatar']}" width="90" height="90" clip-path="url(#s)"/>
-         <rect width="90" height="90" rx="4" fill="none" stroke="rgba(0,0,0,0.1)"/>
-      </g>
-      <g transform="translate(140,35)" font-family="Arial, Helvetica, sans-serif">
-         <text y="0" font-weight="bold" font-size="22" fill="#333">{d['name']}</text>
-         <text y="28" font-size="11" font-weight="bold" fill="#586069">{d['l1']}</text>
-         <text y="42" font-size="11" fill="#586069">{d['l2']}</text>
-         <line x1="0" y1="60" x2="300" y2="60" stroke="#eee"/>
+      <rect width="478" height="138" x="1" y="1" rx="4" fill="#FFFFFF" stroke="#e1e4e8"/>
+      <rect width="6" height="138" x="1" y="1" rx="1" fill="{d['color']}"/>
+      <g transform="translate(30,25)"><image href="{d['avatar']}" width="90" height="90" clip-path="url(#s)"/></g>
+      <g transform="translate(140,40)" font-family="Arial, Helvetica, sans-serif">
+         <text y="0" font-weight="bold" font-size="24" fill="#333">{d['name']}</text>
+         <text y="30" font-size="11" font-weight="bold" fill="#586069">{d['l1']}</text>
+         <text y="45" font-size="11" fill="#586069">{d['l2']}</text>
+         <line x1="0" y1="70" x2="300" y2="70" stroke="#eee"/>
          {msg_html}
       </g>
     </svg>"""
 
 # ===========================
-#        CONTROLLER
+#       ROUTE HANDLER
 # ===========================
 
 @app.route('/superbadge/<key>')
 @app.route('/badge/<mode>/<key>')
-def handler(key, mode="auto"):
-    # 1. SETUP
+def main(key, mode="auto"):
     args = request.args
     target_mode = mode
     if mode == "auto":
         target_mode = 'user' if (key.isdigit() and len(str(key)) > 15) else 'discord'
         
-    # 2. DATA
+    # 1. Fetch
     data = fetch_data(key, target_mode, args)
-    if not data: return Response('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="50"><text x="10" y="30" fill="red">DATA ERROR</text></svg>', mimetype='image/svg+xml')
+    if not data: return Response('<svg xmlns="http://www.w3.org/2000/svg" width="300" height="50"><text x="10" y="30" fill="red">DATA API ERROR</text></svg>', mimetype="image/svg+xml")
 
-    # 3. SETTINGS
-    anim_on = args.get('animations', 'true')
+    # 2. Config
+    roast = args.get('roastMode', 'false').lower() == 'true'
     ai_on = args.get('aifeatures', 'true')
-    roast = args.get('roastMode', 'false') == 'true'
+    anim_on = args.get('animations', 'true')
     style = args.get('style', 'hyper').lower()
     
-    bg = args.get('bg', '09090b').replace('#','')
-    rad = args.get('borderRadius', '20').replace('px','')
-
-    # 4. AI LOGIC
+    # 3. AI
     ai_role = "roast" if roast else "hud"
-    full_text = f"{data.get('l1','')} {data.get('l2','')}"
-    
-    msg = consult_gemini(full_text, data['name'], ai_role, ai_on, data.get('type'))
+    context = f"{data['l1']} {data['l2']}"
+    # FIXED CALL: Now sends 5 arguments including type
+    msg = consult_gemini(context, data['name'], ai_role, ai_on, data.get('type'))
 
-    # 5. RENDER
+    # 4. Render
     css = get_css(anim_on)
-    
-    if style == 'cute':
-        svg = render_cute(data, msg, css, bg)
-    elif style == 'terminal':
-        svg = render_terminal(data, msg, css, bg)
-    elif style == 'pro' or style == 'professional':
-        svg = render_pro(data, msg)
-    else:
-        svg = render_hyper(data, msg, css, bg, rad)
+    bg_col = args.get('bg', '09090b').replace('#', '')
+    radius = args.get('borderRadius', '20').replace('px', '')
+
+    if style == 'cute': svg = render_cute(data, msg, css, bg_col)
+    elif style == 'terminal': svg = render_terminal(data, msg, css, bg_col)
+    elif style == 'pro' or style == 'professional': svg = render_pro(data, msg, args)
+    else: svg = render_hyper(data, msg, css, radius, bg_col)
 
     return Response(svg, mimetype="image/svg+xml", headers={"Cache-Control": "no-cache, max-age=0"})
 
