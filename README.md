@@ -1,137 +1,122 @@
-# ⚡ Zandy HyperBadge
+# ⚡ Chillax HyperBadge
 
 <div align="center">
 
-<a href="https://github.com/zapgaming">
-  <img src="https://badge-oq5l.onrender.com/superbadge/1173155162093785099?style=hyper&showDisplayName=true&roastMode=false&&fgAnimations=false&aifeatures=false" alt="HyperBadge" height="180"/>
+<!-- REPLACE 'your-app-name' WITH YOUR ACTUAL RENDER APP NAME BELOW -->
+<a href="https://github.com/warrayquipsome">
+  <img src="https://your-app-name.onrender.com/superbadge/1173155162093785099?style=chillax&roastMode=false&idleMessage=Coding" alt="HyperBadge" height="150"/>
 </a>
 
 <p align="center">
-  <b>The Ultimate Dynamic Status Generator</b><br>
-  Powered by Flask, Lanyard, and Google Gemini AI.
+  <b>The Next-Gen Status Generator for GitHub Profiles</b><br>
+  <i>Powered by Flask, Lanyard, Discord, and Google Gemini AI.</i>
 </p>
 
 </div>
 
 ---
 
-## 🚀 Overview
+## 🎨 Overview
 
-HyperBadge is a high-performance SVG generation API. It creates live, animated, and AI-enhanced badges for your GitHub Profile or Website. 
+HyperBadge is a high-performance Python application that generates **real-time, animated SVG badges** for your GitHub `README.md`.
 
-It tracks your **Discord Activity** (Games, VS Code, Spotify) or **GitHub Stats** and uses a Neural AI to generate sci-fi HUD updates (or roast you) in real-time.
-
-### ✨ Key Features
-*   **🎵 Deep Spotify:** Automatically pulls Album Art and sets it as a blurred, atmospheric background.
-*   **🎨 5 Visual Engines:** Choose from Hyper, EasterEgg (Mac OS), Cute, Terminal, or Professional.
-*   **🧠 Neural Core:** Gemini AI analyzes your specific song or game and comments on it.
-*   **🕹️ Animation Control:** Fine-tune background drift vs. UI bobbing for performance or aesthetics.
-*   **🔌 Universal:** Supports Discord User IDs, Discord Server Invites, and GitHub Usernames.
+It tracks your **Discord Activity** (Games, Spotify, Coding) or **GitHub Stats** and uses **Neural AI** to generate sci-fi HUD updates, music analysis, or savage roasts based on your current status.
 
 ---
 
-## 🛠️ Usage Guide
+## 🚀 Quick Usage
 
-Base URL: `https://badge-oq5l.onrender.com`
-
-### 1. The "Magic" Link (Auto-Detect)
-Automatically detects if you provided a User ID (Lanyard) or an Invite Code.
+### 1. The Magic Link (Auto-Detect)
+Replace `YOUR_ID` with your **Discord User ID**, **Server Invite**, or **GitHub Username**.
 
 ```markdown
-![My Status](https://badge-oq5l.onrender.com/superbadge/YOUR_DISCORD_USER_ID)
+![Status](https://badge-oq5l.onrender.com/superbadge/YOUR_ID)
 ```
 
-### 2. Specific Endpoints
+### 2. Specific Modes
 
-| Type | Endpoint | Description |
+| Mode | Input | Example Link |
 | :--- | :--- | :--- |
-| **User Status** | `/badge/user/<id>` | Shows detailed activity, music, and AI status. |
-| **Discord Server** | `/badge/discord/<code>` | Shows Member count and Online count. |
-| **GitHub Stats** | `/badge/github/<user>` | Shows Repositories and Follower counts. |
+| **Discord User** | `User ID` | `.../badge/user/1173155...` |
+| **Discord Server** | `Invite Code` | `.../badge/discord/DrfX6286kF` |
+| **GitHub Profile** | `Username` | `.../badge/github/warrayquipsome` |
 
 ---
 
-## 🎛️ Configuration Parameters
+## 🎨 Style Gallery
 
-Customize your badge by adding these queries to the end of your URL:
-Example: `.../superbadge/12345?style=cute&roastMode=true&bg=ffe4e1`
+Customize the look by adding `?style=NAME` to the URL.
 
-### 🎨 Visuals
+| Style Name | Description | Visual Vibe |
+| :--- | :--- | :--- |
+| **`chillax`** | **(New)** Replicates the custom Vencord/BetterDiscord translucent client aesthetic. | Glass, Aurora, Script Fonts |
+| **`hyper`** | **(Default)** Advanced GLSL liquid shader background. Supports Spotify Album Art blur. | Neon, Liquid, Deep Space |
+| **`spotify`** | Dedicated music player card with album art and a real-time progress bar. | Clean, Music-Focused |
+| **`easteregg`** | "macOS 26" futuristic aesthetic. Floating islands and RGB flow borders. | Fluid OS, Apple, 3D |
+| **`terminal`** | Retro CRT Monitor with scanlines, Vim status bar, and syntax highlighting. | Hacker, Dev, Matrix |
+| **`cute`** | Pastel colors, scrolling heart patterns, bouncing animations, and kawaii UI. | Soft, Anime, Pink/White |
+| **`pro`** | Static, high-contrast, clean business card. Perfect for emails. | Professional, Minimal |
+
+**Example:**
+```markdown
+![](https://badge-oq5l.onrender.com/superbadge/YOUR_ID?style=chillax&bg=18191c)
+```
+
+---
+
+## 🎛️ Customization & Parameters
+
+Tailor the badge to your needs by adding query parameters:
+
+### 🎭 Visuals
+| Param | Values | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `bg` | Hex Code | `09090b` | Custom background color (exclude the `#`). |
+| `borderRadius` | Pixels | `20` | Corner roundness (e.g. `20` or `0` for sharp). |
+| `showDisplayName` | `true/false` | `true` | Use your Global Display Name instead of Username. |
+
+### 🤖 AI & Logic
 | Param | Values | Description |
 | :--- | :--- | :--- |
-| `style` | `hyper`, `easteregg`, `cute`, `terminal`, `pro` | The rendering engine to use. (Default: `hyper`) |
-| `bg` | Hex Code (e.g. `09090b`) | Custom background color (without the #). |
-| `borderRadius` | Number (e.g. `20`) | Corner roundness in pixels. |
-| `showDisplayName` | `true`, `false` | Use Global Discord Name instead of username. |
+| `roastMode` | `true` | Changes AI personality from "System OS" to "Savage Troll". |
+| `idleMessage` | Text | Custom text to show when offline (e.g. "SLEEPING"). |
+| `aifeatures` | `false` | **Hide AI:** Removes the AI text/box entirely from the badge. |
 
-### ⚡ Animation & Performance
+### ⚡ Performance & Animation
 | Param | Values | Description |
 | :--- | :--- | :--- |
-| `animations` | `false` | **Master Switch:** Turns off ALL movement (CPU friendly). |
-| `bgAnimations` | `false` | Disables background fluid/mesh, keeps UI floating. |
-| `fgAnimations` | `false` | Disables UI floating/bobbing, keeps background fluid. |
-
-### 🤖 AI Intelligence
-| Param | Values | Description |
-| :--- | :--- | :--- |
-| `aifeatures` | `false` | **Privacy Mode:** Completely hides the AI text and chip from the badge. |
-| `roastMode` | `true` | Changes AI personality from "Sci-Fi HUD" to "Savage Troll". |
-| `idleMessage` | Text (e.g. `Sleepy`) | Custom text to show when you are Offline/Idle. |
+| `animations` | `false` | **Master Switch:** Turns off ALL movement. |
+| `bgAnimations` | `false` | Disables background fluids/meshes, keeps UI floating. |
+| `fgAnimations` | `false` | Disables UI floating/bobbing, keeps background alive. |
 
 ---
 
-## 🖼️ Style Gallery
+## 🛠️ Deployment (Self-Hosting)
 
-### 1. Style: `hyper` (Default)
-> Liquid GLSL shaders, Album Art backgrounds, glassmorphism.
-```markdown
-![](https://.../superbadge/ID?style=hyper)
-```
+You can host this for free on **Render.com**.
 
-### 2. Style: `easteregg` (Liquid OS)
-> A futuristic "macOS 26" aesthetic with floating islands, RGB flow borders, and an aurora mesh background.
-```markdown
-![](https://.../superbadge/ID?style=easteregg)
-```
-
-### 3. Style: `terminal`
-> Retro CRT hacker monitor. Scanlines, line numbers, and syntax highlighting.
-```markdown
-![](https://.../superbadge/ID?style=terminal&roastMode=true)
-```
-
-### 4. Style: `cute`
-> Pastel colors, scrolling patterns, bouncing hearts, and a kawaii bunny helper.
-```markdown
-![](https://.../superbadge/ID?style=cute&bg=fff0f5)
-```
-
-### 5. Style: `professional`
-> Static, clean, high-contrast. Uses system fonts. Perfect for email signatures.
-```markdown
-![](https://.../superbadge/ID?style=professional)
-```
-
----
-
-## 📦 Deployment (Self-Hosting)
-
-Deploy for free on **Render**.
-
-1.  Clone this repository.
-2.  Go to [Render.com](https://render.com) and create a **Web Service**.
+1.  **Clone** this repository.
+2.  Go to **Render Dashboard** -> New **Web Service**.
 3.  Connect your repo.
-4.  **Build Command:** `pip install -r requirements.txt`
-5.  **Start Command:** `gunicorn app:app`
-6.  **Environment Variables:**
-    *   `GEMINI_API_KEY`: Get this from [Google AI Studio](https://aistudio.google.com/app/apikey).
+4.  **Settings:**
+    *   **Runtime:** Python 3
+    *   **Build Command:** `pip install -r requirements.txt`
+    *   **Start Command:** `gunicorn app:app`
+5.  **Environment Variables:**
+    *   Key: `GEMINI_API_KEY`
+    *   Value: *(Your Google AI Studio Key)*
 
-### ⚠️ Requirements
-To show Discord User status, you **must** be in the Lanyard Discord Server.
-*   Join here: [discord.gg/lanyard](https://discord.gg/lanyard)
+---
+
+### ⚠️ Important: Lanyard Setup
+To display **User Activity** (Games, Music, VS Code), you must be a member of the Lanyard Discord Server. This is required for the API to see you.
+
+1.  Join here: [discord.gg/lanyard](https://discord.gg/lanyard)
+2.  Wait ~5 minutes for caching.
+3.  The badge will switch from "UNKNOWN" to your status automatically.
 
 ---
 
 <div align="center">
-  <sub>HyperBadge V17 // Zandy</sub>
+  <sub><b>Chillax Development</b> // Built by WQ</sub>
 </div>
