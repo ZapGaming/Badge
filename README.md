@@ -39,7 +39,6 @@ Replace `YOUR_ID` with your **Discord User ID**, **Server Invite**, or **GitHub 
 | :--- | :--- | :--- |
 | **Discord User** | `User ID` | `.../badge/user/1173155...` |
 | **Discord Server** | `Invite Code` | `.../badge/discord/DrfX6286kF` |
-| **GitHub Profile** | `Username` | `.../badge/github/warrayquipsome` |
 
 ---
 
