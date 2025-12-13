@@ -3,7 +3,7 @@
 <div align="center">
 
 <a href="https://github.com/zapgaming">
-  <img src="https://badge-oq5l.onrender.com/superbadge/1173155162093785099?style=easteregg&showDisplayName=true&roastMode=false&animations=false&aifeatures=false" alt="HyperBadge" height="180"/>
+  <img src="https://badge-oq5l.onrender.com/superbadge/1173155162093785099?style=easteregg&showDisplayName=true&roastMode=false&&fgAnimations=false&aifeatures=false" alt="HyperBadge" height="180"/>
 </a>
 
 <p align="center">
