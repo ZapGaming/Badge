@@ -37,7 +37,7 @@ It serves as a single endpoint for all your status needs:
 
 ## 🛠️ Usage Guide
 
-**Base URL:** `https://badge-oq5l.onrender.com`
+**Base URL:** `https://badge-oq5l.onrender.com` (main) `https://redpanda.onpella.app/` (working soon)
 
 ### 1. The Magic Link (Auto-Detect)
 The system automatically detects if you are asking for a User, a Server, or a Repo.
