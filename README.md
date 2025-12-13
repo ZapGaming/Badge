@@ -50,7 +50,7 @@ The system automatically detects if you are asking for a User, a Server, or a Re
 | :--- | :--- | :--- |
 | **Discord User** | `User ID` | `.../superbadge/1173155...` |
 | **Discord Server** | `Invite Code` | `.../superbadge/DrfX6286kF` |
-| **GitHub User** | `Username` | `.../superbadge/torvalds` |
+| **GitHub User** (not working atm) | `Username` | `.../superbadge/torvalds` |
 | **GitHub Repo** (not working atm) | `User/Repo` | `.../superbadge/torvalds/linux` |
 
 ---
