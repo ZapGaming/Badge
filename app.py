@@ -11,7 +11,7 @@ app = Flask(__name__)
 # ===========================
 #        CONFIGURATION
 # ===========================
-HEADERS = {'User-Agent': 'HyperBadge/Titan-v46'}
+HEADERS = {'User-Agent': 'HyperBadge/Titan-Fixed-v47'}
 # 1x1 Transparent Pixel
 EMPTY = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
 
@@ -37,7 +37,6 @@ PLATFORM_PATHS = {
 def sanitize_xml(text):
     if not text: return ""
     text = str(text)
-    # Remove control chars (0-31) except tab/newline
     text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', text)
     return html.escape(text, quote=True)
 
@@ -56,7 +55,7 @@ def get_base64(url, is_svg=False):
     return EMPTY
 
 def get_css(bg_anim, fg_anim):
-    css = "@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@800&amp;family=Outfit:wght@400;500;800;900&amp;family=Pacifico&amp;family=Poppins:wght@400;600&amp;display=swap');"
+    css = "@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@800&amp;family=Outfit:wght@400;500;800;900&amp;family=Pacifico&amp;family=Poppins:wght@400;500;600&amp;display=swap');"
     
     keyframes = """
     @keyframes fade { 0%{opacity:0.3} 50%{opacity:0.6} 100%{opacity:0.3} }
@@ -100,25 +99,25 @@ def fetch_data(key, type_mode, args):
         else:
             # A. Fetch Profile (DCDN)
             dcdn_user, badges_data, connections_data, banner_bg = {}, [], [], None
-            dcdn_bio = ""
-
+            
             try:
                 r_prof = requests.get(f"https://dcdn.dstn.to/profile/{key}", headers=HEADERS, timeout=3)
                 if r_prof.status_code == 200:
                     prof_json = r_prof.json()
                     if 'user' in prof_json:
                         dcdn_user = prof_json['user']
-                        dcdn_bio = dcdn_user.get('bio', '')
-                        if dcdn_user.get('banner'): banner_bg = get_base64(dcdn_user['banner'])
                         # Badges
                         for b in prof_json.get('badges', []):
-                            badges_data.append(get_base64(b['icon']))
+                            badges_data.append(get_base64(f"https://cdn.discordapp.com/badge-icons/{b['icon']}.png"))
                         # Connections
                         for c in prof_json.get('connected_accounts', []):
                             ctype = c['type']
                             if ctype in CONN_MAP:
-                                c_url = f"{SIMPLE_ICONS_BASE}{CONN_MAP[c['type']]}.svg"
+                                c_url = f"{SIMPLE_ICONS_BASE}{CONN_MAP[ctype]}.svg"
                                 connections_data.append(get_base64(c_url, is_svg=True))
+                        # Banner
+                        if dcdn_user.get('banner'):
+                             banner_bg = get_base64(dcdn_user['banner'])
             except: pass
 
             # B. Fetch Presence (Lanyard)
@@ -137,16 +136,14 @@ def fetch_data(key, type_mode, args):
             if d.get('active_on_discord_web'): platforms.append("web")
 
             cols = {"online": "#00FF99", "idle": "#FFBB00", "dnd": "#ED4245", "offline": "#80848e", "spotify": "#1DB954"}
-            status_col = cols.get(status, "#555")
-
-            # --- ACTIVITY PARSING ---
+            
             main_act = None
 
-            # 1. Spotify (Priority)
+            # 1. Spotify
             if d.get('spotify'):
                 s = d['spotify']
                 main_act = {
-                    "header": "SPOTIFY",
+                    "header": "LISTENING TO SPOTIFY",
                     "title": s['song'],
                     "detail": s['artist'],
                     "image": s.get('album_art_url'),
@@ -164,14 +161,9 @@ def fetch_data(key, type_mode, args):
                         if imid.startswith("mp:"): img_url = f"https://media.discordapp.net/{imid[3:]}"
                         else: img_url = f"https://cdn.discordapp.com/app-assets/{aid}/{imid}.png"
                     
-                    # Nice header logic
-                    aname = act['name'].upper()
-                    if act['type'] == 0: head = f"PLAYING {aname}"
-                    elif act['type'] == 3: head = f"WATCHING {aname}"
-                    else: head = aname
-
+                    header = "PLAYING" if act['type'] == 0 else "WATCHING"
                     main_act = {
-                        "header": head,
+                        "header": f"{header} {act['name'].upper()}",
                         "title": act.get('details') or act['name'],
                         "detail": act.get('state') or "",
                         "image": img_url,
@@ -186,15 +178,18 @@ def fetch_data(key, type_mode, args):
                 for act in d.get('activities', []):
                     if act['type'] == 4: msg = act.get('state', msg); break
                 
+                header_stat = "OFFLINE" if status == 'offline' else "CURRENTLY"
+                
                 main_act = {
-                    "header": "STATUS",
-                    "title": msg, "detail": "Online" if status!='offline' else "Offline",
-                    "image": None, "color": status_col, "is_music": False
+                    "header": header_stat, "title": msg, "detail": "Online" if status!='offline' else "Offline",
+                    "image": None, "color": cols.get(status, "#555")
                 }
 
             final_name = force_name if force_name else (dcdn_user.get('global_name') or u['global_name'] or u['username'])
             u_avatar = get_base64(f"https://cdn.discordapp.com/avatars/{u['id']}/{u['avatar']}.png")
-            final_bg = banner_bg if banner_bg else u_avatar # Fallback
+            # If Banner missing, use a solid color fallback via Logic in Renderer
+            
+            bio_clean = sanitize_xml(dcdn_user.get('bio', 'No Bio Set.'))
             
             return {
                 "type": "user",
@@ -203,72 +198,58 @@ def fetch_data(key, type_mode, args):
                 "detail": sanitize_xml(main_act['detail']),
                 "app_name": sanitize_xml(main_act['header']),
                 "color": main_act['color'],
-                "status_color": status_col,
+                "status_color": cols.get(status, "#555"),
                 "avatar": u_avatar,
-                "banner_image": final_bg,
+                "banner_image": banner_bg, # Can be None
                 "act_image": get_base64(main_act['image']) if main_act['image'] else None,
-                "bio": sanitize_xml(dcdn_bio if dcdn_bio else "No biography set."),
+                "bio": bio_clean,
                 "badges": badges_data,
                 "connections": connections_data,
                 "platforms": platforms,
-                "sub_id": u['id'],
-                "is_music": main_act['is_music']
+                "sub_id": u['id']
             }
     except Exception as e:
         print(f"Fetch Error: {e}")
         return None
 
 # ===========================
-#      RENDER ENGINE (V46)
+#      RENDER ENGINE (V46 Fixed)
 # ===========================
 
-def render_ultimate_profile(d, css, radius, bg_col):
+def render_mega_profile(d, css, radius, bg_col):
     """
-    TITAN V46: SPLIT LAYOUT + VIBRANT MODE
-    Canvas: 900 x 350
-    Left: Identity
-    Right: Activity
+    Layout: Split Design. Identity (Left), Dock (Right-Floating)
     """
 
-    # 1. Vibrant Background
-    # Using 'saturate(1.4)' class for pop
-    bg_svg = f"""
-    <rect width="100%" height="100%" fill="#{bg_col}" />
-    <!-- Gradient Blobs based on Colors -->
-    <circle cx="200" cy="100" r="400" fill="{d['color']}" opacity="0.15" filter="url(#heavyBlur)" class="bg-drift vibrant"/>
-    <circle cx="800" cy="300" r="300" fill="{d['status_color']}" opacity="0.15" filter="url(#heavyBlur)" class="bg-drift"/>
-    <!-- Noise & Vignette -->
-    <rect width="100%" height="100%" fill="url(#noise)"/>
-    <rect width="100%" height="100%" fill="url(#vig)"/>
-    """
-
-    # 2. Activity / Music Block (Right Side)
-    if d['act_image'] and d['act_image'] != EMPTY:
-        # Full Art with reflection
-        act_viz = f"""
-        <g class="float">
-            <!-- Main Image -->
-            <image href="{d['act_image']}" x="570" y="55" width="160" height="160" rx="20" class="vibrant" />
-            <!-- Inner Border -->
-            <rect x="570" y="55" width="160" height="160" rx="20" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="2"/>
-        </g>
+    # 1. Background Logic
+    if d.get('banner_image'):
+         # If Banner exists
+        bg_svg = f"""
+        <rect width="100%" height="100%" fill="#{bg_col}" />
+        <image href="{d['banner_image']}" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" opacity="0.3" filter="url(#heavyBlur)" class="bg-drift"/>
         """
-        # Background Blur behind card
-        card_bg = f'<image href="{d["act_image"]}" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" opacity="0.3" filter="url(#heavyBlur)"/>'
     else:
-        # Fallback Graphic
-        act_viz = f"""
-        <g class="float">
-            <rect x="570" y="55" width="160" height="160" rx="20" fill="rgba(255,255,255,0.03)" stroke="{d['color']}" stroke-width="1"/>
-            <text x="650" y="145" text-anchor="middle" font-size="50">⚡</text>
-        </g>
+        # Fallback Abstract Gradient
+        bg_svg = f"""
+        <rect width="100%" height="100%" fill="#{bg_col}" />
+        <circle cx="200" cy="100" r="400" fill="{d['color']}" opacity="0.2" filter="url(#heavyBlur)" class="bg-drift vibrant"/>
+        <circle cx="800" cy="300" r="300" fill="{d['status_color']}" opacity="0.15" filter="url(#heavyBlur)" class="bg-drift"/>
         """
-        card_bg = ""
-
-    # Music Vinyl Effect
-    if d['is_music']:
-         # Overlay a vinyl groove texture on the art if music
-         pass # Handled by CSS animations potentially
+    
+    # 2. Activity Image (Left side of dock)
+    if d['act_image']:
+        act_viz = f"""
+        <image href="{d['act_image']}" x="530" y="55" width="160" height="160" rx="14" class="vibrant" />
+        <rect x="530" y="55" width="160" height="160" rx="14" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="2"/>
+        """
+        # Dock Text Position (To the right of the big image)
+        txt_x = 220 
+    else:
+        act_viz = f"""
+        <rect x="570" y="55" width="120" height="120" rx="14" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.1)"/>
+        <text x="630" y="125" text-anchor="middle" font-family="Outfit" font-size="50" fill="{d['color']}">⚡</text>
+        """
+        txt_x = 20 # Align to right dock normally
 
     # 3. Badges Row
     badge_group = ""
@@ -277,27 +258,22 @@ def render_ultimate_profile(d, css, radius, bg_col):
         for i, b in enumerate(d['badges'][:8]):
             badge_group += f'<image href="{b}" x="{bx}" y="0" width="32" height="32" class="pop-in" style="animation-delay:{i*0.05}s"/>'
             bx += 38
-
-    # 4. Connections (Right Bottom)
+        
+    # 4. Connections Row
     conn_group = ""
     cx = 0
     if d.get('connections'):
         for i, c in enumerate(d['connections'][:5]):
-            # Added a white circle BG to ensure visibility
-             conn_group += f"""
-             <g transform="translate({cx},0)" class="pop-in" style="animation-delay:{0.2+i*0.05}s">
-                 <circle cx="15" cy="15" r="18" fill="rgba(255,255,255,0.05)"/>
-                 <image href="{c}" x="5" y="5" width="20" height="20" filter="url(#invert)" opacity="0.9"/>
-             </g>"""
-             cx += 42
+             conn_group += f'<image href="{c}" x="{cx}" y="0" width="22" height="22" filter="url(#invert)" opacity="0.7"/>'
+             cx += 34
 
-    # 5. Platforms (Beside Badges)
+    # 5. Platforms Icons
     plat_svg = ""
-    px = bx + 20
+    px = 830
     for p in d.get('platforms', []):
         if p in PLATFORM_PATHS:
-             plat_svg += f'<path transform="translate({px}, 6) scale(1.4)" d="{PLATFORM_PATHS[p]}" fill="{d["status_color"]}" opacity="0.8"/>'
-             px += 40
+             plat_svg += f'<path transform="translate({px}, 40) scale(1.1)" d="{PLATFORM_PATHS[p]}" fill="{d["status_color"]}" opacity="0.9" />'
+             px -= 30
 
     return f"""<svg width="900" height="350" viewBox="0 0 900 350" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
       <defs>
@@ -312,31 +288,37 @@ def render_ultimate_profile(d, css, radius, bg_col):
         <clipPath id="cp"><rect width="900" height="350" rx="{radius}"/></clipPath>
         <clipPath id="avc"><circle cx="85" cy="85" r="85"/></clipPath>
         
-        <filter id="heavyBlur"><feGaussianBlur stdDeviation="70"/></filter>
+        <filter id="heavyBlur"><feGaussianBlur stdDeviation="60"/></filter>
         <filter id="invert"><feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0"/></filter>
+        <filter id="ds"><feDropShadow dx="0" dy="4" stdDeviation="4" flood-opacity="0.5"/></filter>
         
-        <linearGradient id="vig" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="rgba(0,0,0,0.3)"/><stop offset="1" stop-color="#000" stop-opacity="0.9"/></linearGradient>
+        <linearGradient id="vig" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stop-color="rgba(0,0,0,0.2)"/>
+            <stop offset="1" stop-color="#000" stop-opacity="0.9"/>
+        </linearGradient>
         
-        <pattern id="noise" width="60" height="60" patternUnits="userSpaceOnUse"><rect width="1" height="1" fill="white" opacity="0.04"/></pattern>
+        <pattern id="noise" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="1" height="1" fill="white" opacity="0.04"/></pattern>
         <pattern id="dots" width="20" height="20" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1.5" fill="white" opacity="0.03"/></pattern>
       </defs>
 
-      <!-- 1. BACKDROP -->
+      <!-- 1. BASE LAYER -->
       <g clip-path="url(#cp)">
         {bg_svg}
-        <rect width="100%" height="100%" fill="url(#dots)" />
         
-        <!-- Border Shine -->
-        <rect width="896" height="346" x="2" y="2" rx="{radius}" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2"/>
-        <rect width="896" height="346" x="2" y="2" rx="{radius}" fill="none" stroke="white" stroke-opacity="0.2" stroke-width="1" transform="scale(0.995) translate(2,2)"/>
+        <!-- Texture & Overlays -->
+        <rect width="100%" height="100%" fill="url(#noise)"/>
+        <rect width="100%" height="100%" fill="url(#vig)"/>
+        <rect width="896" height="346" x="2" y="2" rx="{radius}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="2"/>
       </g>
       
-      <!-- 2. LEFT PANEL (Identity) -->
+      <!-- 2. LEFT: IDENTITY -->
       <g transform="translate(60, 60)">
          <!-- Avatar Group -->
          <g class="float">
+             <!-- Status Ring -->
              <circle cx="85" cy="85" r="92" fill="none" stroke="{d['color']}" stroke-width="2" opacity="0.5"/>
              <circle cx="85" cy="85" r="88" fill="#151515"/>
+             <!-- Masked Image -->
              <g clip-path="url(#avc)"><image href="{d['avatar']}" width="170" height="170" /></g>
              
              <!-- Status Dot (Huge) -->
@@ -344,47 +326,49 @@ def render_ultimate_profile(d, css, radius, bg_col):
              <circle cx="150" cy="140" r="16" fill="{d['status_color']}" class="status-pulse"/>
          </g>
 
-         <!-- Info Below Avatar -->
-         <g transform="translate(220, 10)">
-            <g transform="translate(0, 0)">{badge_group} {plat_svg}</g>
-            
-            <text x="0" y="65" class="title" font-size="58">{d['name']}</text>
-            <text x="5" y="90" class="mono" font-size="14">UID :: {d['sub_id']}</text>
-            
-            <foreignObject x="0" y="105" width="450" height="65">
-                <div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Poppins',sans-serif; font-size:16px; color:#ddd; line-height:1.5; overflow:hidden;">
-                    {d['bio']}
-                </div>
-            </foreignObject>
+         <!-- Info Stack (Below Avatar in your design concept) -->
+         <g transform="translate(200, 10)">
+             <!-- Top Row Badges -->
+             {badge_group}
+             
+             <!-- Name -->
+             <text x="0" y="55" class="title" font-size="58">{d['name']}</text>
+             <!-- ID -->
+             <text x="5" y="80" class="mono" font-size="12">ID :: {d['sub_id']}</text>
+             
+             <!-- Bio (ForeignObject HTML for wrapping) -->
+             <foreignObject x="5" y="90" width="300" height="60">
+                 <div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Poppins',sans-serif; font-size:16px; color:#ddd; line-height:1.4; overflow:hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; opacity:0.9;">
+                   {d['bio']}
+                 </div>
+             </foreignObject>
          </g>
       </g>
+      
+      <!-- Platforms Icon Row -->
+      <g transform="translate(750, 40)">{plat_svg}</g>
 
-      <!-- 3. RIGHT PANEL (Activity) -->
-      <!-- Floating Glass Panel aligned Right -->
-      <g transform="translate(540, 20)">
-         <!-- Glass Card BG -->
-         <rect x="0" y="0" width="340" height="310" rx="20" fill="rgba(0,0,0,0.4)" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>
-         
-         <g clip-path="url(#cardClip)">
-            <!-- Art Ambient inside Card -->
-            {card_bg}
-         </g>
-         
-         <!-- Album Art -->
-         {act_viz}
+      <!-- 3. RIGHT: FLOATING DOCK -->
+      <!-- We shift the dock to the right side of the canvas -->
+      <g transform="translate(520, 20)" class="slide-in">
+          <!-- The Glass Card Background -->
+          <rect x="0" y="0" width="360" height="310" rx="24" fill="rgba(25,25,30,0.5)" stroke="{d['color']}" stroke-opacity="0.3" stroke-width="1.5"/>
+          <rect x="0" y="0" width="360" height="310" rx="24" fill="url(#dots)" opacity="0.5"/>
+          
+          <!-- Image Layer -->
+          {act_viz}
 
-         <!-- Song Data -->
-         <g transform="translate(20, 240)">
-            <text x="0" y="0" class="h2" font-size="11" fill="{d['color']}">{d['app_name']}</text>
-            <text x="0" y="30" class="h1" font-size="24" fill="white" style="text-shadow: 0 4px 10px rgba(0,0,0,0.8)">{d['title'][:19]}</text>
-            <text x="0" y="52" class="body" font-size="14" fill="#BBB">{d['detail'][:25]}</text>
-         </g>
-         
-         <!-- Connections Dock (Bottom Right inside card) -->
-         <g transform="translate(20, 25)">
-            {conn_group}
-         </g>
-
+          <!-- Activity Text (Below the image in this vertical layout) -->
+          <g transform="translate(20, 240)">
+             <text x="0" y="0" class="h2" font-size="10" fill="{d['color']}">{d['app_name']}</text>
+             <text x="0" y="28" class="h1" font-size="22" fill="white">{d['title'][:25]}</text>
+             <text x="0" y="48" class="body" font-size="13" fill="#CCC">{d['detail'][:35]}</text>
+          </g>
+          
+          <!-- Connections (Inside Dock Bottom) -->
+          <g transform="translate(20, 25)">
+              {conn_group}
+          </g>
       </g>
 
     </svg>"""
@@ -392,17 +376,16 @@ def render_ultimate_profile(d, css, radius, bg_col):
 # ===========================
 #        CONTROLLER
 # ===========================
+
 @app.route('/superbadge/<key>')
 def handler(key):
     args = request.args
-    # Detect Mode
     mode = 'user' if (key.isdigit() and len(str(key)) > 15) else 'discord'
     data = fetch_data(key, mode, args)
     
     if not data:
-         return Response('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="350"><rect width="100%" height="100%" fill="#050505"/><text x="450" y="175" fill="red" font-family="sans-serif" font-size="30" text-anchor="middle">USER FETCH FAILURE</text></svg>', mimetype="image/svg+xml")
+         return Response('<svg xmlns="http://www.w3.org/2000/svg" width="900" height="350"><rect width="100%" height="100%" fill="#111"/><text x="450" y="175" fill="red" text-anchor="middle">ERROR</text></svg>', mimetype="image/svg+xml")
 
-    # Render settings
     bg_an = args.get('bgAnimations', 'true')
     fg_an = args.get('fgAnimations', 'true')
     bg_col = args.get('bg', '111111').replace('#','')
@@ -410,12 +393,13 @@ def handler(key):
 
     css = get_css(bg_an, fg_an)
     
-    if mode == 'discord': # Reuse layout but simplify for servers
-         svg = render_mega_profile(data, css, radius, bg_col)
-    else:
-         svg = render_mega_profile(data, css, radius, bg_col)
+    # We call the FIXED name: render_mega_profile
+    svg = render_mega_profile(data, css, radius, bg_col)
     
     return Response(svg, mimetype="image/svg+xml", headers={"Cache-Control": "no-cache, max-age=0"})
+
+@app.route('/')
+def home(): return "TITAN V42 FIXED ONLINE"
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
