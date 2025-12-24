@@ -11,13 +11,23 @@ app = Flask(__name__)
 # ===========================
 #        CONFIGURATION
 # ===========================
-CACHE = {}
-HEADERS = {'User-Agent': 'HyperBadge/Titan-v37'}
+HEADERS = {'User-Agent': 'HyperBadge/Standard-v38'}
+# 1x1 Transparent Pixel
 EMPTY = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+CACHE = {}
 
-# Platform & Social Icons (Base64 cache maps)
-ICON_CACHE = {} 
-SIMPLE_ICONS_BASE = "https://cdn.jsdelivr.net/npm/simple-icons@v9/icons/"
+# Mappings for Connected Accounts (Icons)
+CONN_MAP = {
+    "github": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/github.svg",
+    "steam": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/steam.svg",
+    "twitch": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/twitch.svg",
+    "spotify": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/spotify.svg",
+    "twitter": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/x.svg",
+    "reddit": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/reddit.svg",
+    "youtube": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/youtube.svg",
+    "xbox": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/xbox.svg",
+    "playstation": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/playstation.svg",
+}
 
 # ===========================
 #      HELPER FUNCTIONS
@@ -31,77 +41,61 @@ def sanitize_xml(text):
     return html.escape(text, quote=True)
 
 def get_base64(url, is_svg=False):
+    """Robust image fetcher"""
     if not url: return EMPTY
     try:
         if url.startswith("mp:"): url = f"https://media.discordapp.net/{url[3:]}"
         
-        # Internal Cache to speed up repeat requests
-        if url in ICON_CACHE: return ICON_CACHE[url]
-        
         r = requests.get(url, headers=HEADERS, timeout=4)
         if r.status_code == 200:
-            # Handle SVGs from SimpleIcons
             mime = "image/svg+xml" if (is_svg or url.endswith(".svg")) else "image/png"
-            b64 = f"data:{mime};base64,{base64.b64encode(r.content).decode('utf-8')}"
-            
-            # Simple in-memory LRU cache concept (limit size in real prod)
-            if len(ICON_CACHE) > 50: ICON_CACHE.clear()
-            ICON_CACHE[url] = b64
-            return b64
+            return f"data:{mime};base64,{base64.b64encode(r.content).decode('utf-8')}"
     except: pass
     return EMPTY
 
 def get_css(bg_anim, fg_anim):
     css = "@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@800&amp;family=Outfit:wght@400;500;800&amp;family=Pacifico&amp;family=Poppins:wght@400;600&amp;display=swap');"
-    
     keyframes = """
     @keyframes d { from{transform:scale(1.02) rotate(0deg)} to{transform:scale(1.05) rotate(0.5deg)} }
     @keyframes slide { 0%{transform:translateX(-10px);opacity:0} 100%{transform:translateX(0);opacity:1} }
     @keyframes pop { 0%{transform:scale(0); opacity:0} 100%{transform:scale(1); opacity:1} }
     @keyframes pulse { 0%{opacity:0.6} 50%{opacity:1} 100%{opacity:0.6} }
     """
-    
     classes = ""
     if str(bg_anim).lower() != 'false': classes += ".bg-drift{animation:d 40s linear infinite alternate} .pulsing{animation:pulse 3s infinite}"
-    if str(fg_anim).lower() != 'false': classes += ".slide-in{animation:slide 0.8s ease-out} .badge-pop{animation:pop 0.5s backwards}"
-
+    if str(fg_anim).lower() != 'false': classes += ".slide-in{animation:slide 0.8s ease-out} .badge-pop{animation:pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) backwards}"
     return css + keyframes + classes
 
 # ===========================
-#      DATA LOGIC
+#      DATA LOGIC (HYBRID)
 # ===========================
 
 def fetch_data(key, type_mode, args):
     try:
         force_name = args.get('name')
 
-        # 1. DISCORD SERVER (Minimal mode)
+        # 1. DISCORD SERVER
         if type_mode == 'discord':
             r = requests.get(f"https://discord.com/api/v10/invites/{key}?with_counts=true", headers=HEADERS, timeout=4)
             d = r.json(); g = d.get('guild')
             if not g: return None
-            
-            # Default to compact "MEMBERS" text for servers
-            display_title = force_name if force_name else "TOTAL MEMBERS"
-            
             return {
                 "type": "discord",
-                "name": sanitize_xml(display_title), 
-                "l1": f"{d.get('approximate_member_count', 0):,}", 
-                "l2": "",
+                "name": sanitize_xml(force_name or g['name']), 
+                "title": f"{d.get('approximate_member_count', 0):,} Members",
                 "color": "#5865F2", 
                 "avatar": get_base64(f"https://cdn.discordapp.com/icons/{g['id']}/{g['icon']}.png") if g.get('icon') else EMPTY
             }
 
-        # 2. USER MODE (Hybrid DCDN + Lanyard)
+        # 2. USER MODE
         else:
-            # A. Fetch Profile (DCDN) - Banner, Bio, Badges, Connections
+            # --- A. Fetch Profile (DCDN) ---
+            # Used for: Banner, Bio, Badges, Connections
             dcdn_user = {}
             badges_data = []
             connections_data = []
             
             try:
-                # Based on your HTML example: https://dcdn.dstn.to/profile/{USER_ID}
                 r_prof = requests.get(f"https://dcdn.dstn.to/profile/{key}", headers=HEADERS, timeout=3)
                 if r_prof.status_code == 200:
                     prof_json = r_prof.json()
@@ -109,289 +103,215 @@ def fetch_data(key, type_mode, args):
                         dcdn_user = prof_json['user']
                         # Badges List
                         for b in prof_json.get('badges', []):
-                            # URL scheme from your HTML: cdn.discordapp.com/badge-icons/ICON.png
                             badges_data.append(get_base64(f"https://cdn.discordapp.com/badge-icons/{b['icon']}.png"))
                         # Connections
                         for c in prof_json.get('connected_accounts', []):
-                            # HTML used simple-icons
-                            c_url = f"{SIMPLE_ICONS_BASE}{c['type']}.svg"
-                            connections_data.append(get_base64(c_url, is_svg=True))
+                            ctype = c['type']
+                            if ctype in CONN_MAP:
+                                u_conn = f"{CONN_MAP[ctype]}" # URL is stored in map now in app.py if external, or here we reconstruct
+                                # Quick re-mapping for get_base64 usage if not mapped earlier:
+                                # Re-implementing simplified logic here since CONN_MAP usually holds direct URLS:
+                                # (Note: In prev code I removed the dict, let's fix URL here)
+                                c_url = f"https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/{ctype.replace('twitter','x')}.svg"
+                                connections_data.append(get_base64(c_url, is_svg=True))
             except: pass
 
-            # B. Fetch Presence (Lanyard) - Live Status
+            # --- B. Fetch Presence (Lanyard) ---
             r_lan = requests.get(f"https://api.lanyard.rest/v1/users/{key}", headers=HEADERS, timeout=4)
             lan_json = r_lan.json()
             if not lan_json.get('success'): 
-                return None # Fail if no presence
+                return None 
             
             d = lan_json['data']
             u = d['discord_user']
             status = d['discord_status']
             
-            # --- PLATFORM ICONS ---
-            # Green dot if active on platform
+            # Platforms
             platforms = []
-            for p in ['desktop', 'mobile', 'web']:
-                if d.get(f'active_on_discord_{p}'):
-                    platforms.append(p)
-            
-            # --- COLORS & ACTIVITY ---
-            # Colors from your HTML
-            cols = {"online": "#23a55a", "idle": "#f0b232", "dnd": "#f23f42", "offline": "#80848e", "spotify": "#1DB954", "crunchyroll": "#f47521"}
+            if d.get('active_on_discord_desktop'): platforms.append("desktop")
+            if d.get('active_on_discord_mobile'): platforms.append("mobile")
+            if d.get('active_on_discord_web'): platforms.append("web")
+
+            # Activity Logic
+            cols = {"online": "#23a55a", "idle": "#f0b232", "dnd": "#f23f42", "offline": "#80848e", "spotify": "#1DB954"}
             main_act = None
 
-            # 1. Crunchyroll (Specific Check like HTML)
-            # Find specific crunchyroll activity ID or name
-            crunchy_act = next((a for a in d.get('activities', []) if a.get('application_id') == '802969115042414612' or a['name'] == 'Crunchyroll'), None)
-            
-            if crunchy_act:
-                img_url = None
-                if 'assets' in crunchy_act and 'large_image' in crunchy_act['assets']:
-                    # Poster handling
-                    img = crunchy_act['assets']['large_image']
-                    if img.startswith("mp:"): img_url = f"https://media.discordapp.net/{img[3:]}"
-                    else: img_url = f"https://cdn.discordapp.com/app-assets/{crunchy_act['application_id']}/{img}.png"
-
-                main_act = {
-                    "header": "WATCHING CRUNCHYROLL",
-                    "title": crunchy_act.get('details') or crunchy_act['name'],
-                    "detail": crunchy_act.get('state', ''),
-                    "image": get_base64(img_url),
-                    "color": cols['crunchyroll'],
-                    "is_poster": True
-                }
-
-            # 2. Spotify (If no Crunchy)
-            if not main_act and d.get('spotify'):
+            # 1. Spotify
+            if d.get('spotify'):
                 s = d['spotify']
                 main_act = {
                     "header": "LISTENING TO SPOTIFY",
                     "title": s['song'],
                     "detail": s['artist'],
-                    "image": get_base64(s.get('album_art_url')),
-                    "color": cols['spotify'],
-                    "is_poster": False
+                    "image": s.get('album_art_url'),
+                    "color": cols['spotify']
                 }
-
-            # 3. Game/Other (Fallback)
-            if not main_act:
-                for act in d.get('activities', []):
-                    if act['type'] == 4: continue # Custom status logic below
+            # 2. Rich Presence (Universal - Crunchyroll treated as generic app here)
+            elif d.get('activities'):
+                for act in d['activities']:
+                    if act['type'] == 4: continue # Custom status skip
                     
-                    app_id = act.get('application_id')
+                    # Fetch Image
                     img_url = None
                     if 'assets' in act and 'large_image' in act['assets']:
-                        img = act['assets']['large_image']
-                        if img.startswith("mp:"): img_url = f"https://media.discordapp.net/{img[3:]}"
-                        else: img_url = f"https://cdn.discordapp.com/app-assets/{app_id}/{img}.png"
+                        app_id = act['application_id']
+                        img_id = act['assets']['large_image']
+                        if img_id.startswith("mp:"): img_url = f"https://media.discordapp.net/{img_id[3:]}"
+                        else: img_url = f"https://cdn.discordapp.com/app-assets/{app_id}/{img_id}.png"
                     
-                    head = "WATCHING" if act['type'] == 3 else "PLAYING"
+                    header = "PLAYING"
+                    if act['type'] == 3: header = "WATCHING"
+                    if act['type'] == 2: header = "LISTENING TO"
+
                     main_act = {
-                        "header": f"{head} {act['name'].upper()}",
-                        "title": act.get('details', act['name']),
-                        "detail": act.get('state', ''),
-                        "image": get_base64(img_url),
-                        "color": cols.get(status, "#5865F2"),
-                        "is_poster": False
+                        "header": f"{header} {act['name'].upper()}",
+                        "title": act.get('details') or act['name'],
+                        "detail": act.get('state') or "",
+                        "image": img_url,
+                        "color": cols.get(status, "#5865F2")
                     }
                     break
-
-            # 4. Idle/Custom Status
+            
+            # 3. Idle / Custom Status
             if not main_act:
-                idle_txt = args.get('idleMessage', 'Chilling')
-                # Find custom status
+                msg = args.get('idleMessage', 'Chilling')
                 for act in d.get('activities', []):
-                    if act['type'] == 4 and act.get('state'):
-                        idle_txt = act['state']
+                    if act['type'] == 4: msg = act.get('state', msg); break
                 
                 header_stat = "OFFLINE" if status == 'offline' else "CURRENTLY"
                 
                 main_act = {
-                    "header": header_stat, "title": idle_txt, "detail": "",
-                    "image": None, "color": cols.get(status, "#555"), "is_poster": False
+                    "header": header_stat, "title": msg, "detail": "",
+                    "image": None, "color": cols.get(status, "#555")
                 }
 
-            # Names & Assets
-            f_name = force_name if force_name else (dcdn_user.get('global_name') or u['global_name'] or u['username'])
-            u_bio = dcdn_user.get('bio', '')
+            # Naming
+            final_name = force_name if force_name else (dcdn_user.get('global_name') or u['global_name'] or u['username'])
+            u_avatar = get_base64(f"https://cdn.discordapp.com/avatars/{u['id']}/{u['avatar']}.png")
             
-            # Avatar & Banner Logic
-            raw_av = f"https://cdn.discordapp.com/avatars/{u['id']}/{u['avatar']}.png"
-            final_avatar = get_base64(raw_av)
-            
-            # Banner Priority: DCDN -> Fallback Lanyard/None
+            # Banner
             banner_final = None
             if dcdn_user.get('banner'):
-                # DCDN returns banner hash
-                b_hash = dcdn_user['banner']
-                ext = "gif" if b_hash.startswith("a_") else "png"
-                banner_final = get_base64(f"https://cdn.discordapp.com/banners/{u['id']}/{b_hash}.{ext}?size=600")
+                banner_final = get_base64(dcdn_user['banner'])
 
             return {
                 "type": "user",
-                "name": sanitize_xml(f_name),
+                "name": sanitize_xml(final_name),
                 "title": sanitize_xml(main_act['title']),
                 "detail": sanitize_xml(main_act['detail']),
                 "app_name": sanitize_xml(main_act['header']),
                 "color": main_act['color'],
                 "status_color": cols.get(status, "#80848e"),
-                "avatar": final_avatar,
-                "banner": banner_final, # Could be None, Renderer handles it
-                "act_image": main_act['image'], # Already base64
-                "bio": sanitize_xml(u_bio),
-                "badges": badges_data, # List of b64 strings
-                "connections": connections_data, # List of b64 strings
-                "platforms": platforms, # List of strings ['mobile', 'web']
-                "sub_id": u['id'],
-                "is_poster": main_act['is_poster']
+                "avatar": u_avatar,
+                "banner_image": banner_final if banner_final else u_avatar, # Fallback to avatar if no banner
+                "act_image": get_base64(main_act['image']) if main_act['image'] else None,
+                "bio": sanitize_xml(dcdn_user.get('bio', dcdn_user.get('bio', ''))), # Redundant fallback safety
+                "badges": badges_data, 
+                "connections": connections_data,
+                "platforms": platforms,
+                "sub_id": u['id']
             }
     except Exception as e:
-        print(f"Data Fetch: {e}")
+        print(f"Hybrid Fetch Error: {e}")
         return None
 
 # ===========================
-#      RENDER ENGINE (V37)
+#      RENDER ENGINE
 # ===========================
 
-def render_titan_profile(d, css, radius, bg_col):
-    
-    # 1. Background (Banner -> Blur -> Fallback)
-    if d.get('banner'):
-        bg_fill = f'<image href="{d["banner"]}" width="100%" height="180" preserveAspectRatio="xMidYMid slice" opacity="0.8" filter="url(#heavyBlur)" class="bg-drift"/>'
-    else:
-        # Fallback Gradient based on status color
-        bg_fill = f'<rect width="100%" height="150" fill="url(#gradFall)" /><linearGradient id="gradFall" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="{d["status_color"]}" stop-opacity="0.3"/><stop offset="1" stop-color="black"/></linearGradient>'
+def render_profile(d, css, radius, bg_col):
+    # 1. Background
+    bg_svg = f"""
+    <rect width="100%" height="100%" fill="#{bg_col}" />
+    <image href="{d['banner_image']}" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" opacity="0.4" filter="url(#heavyBlur)" class="bg-drift"/>
+    <rect width="100%" height="100%" fill="url(#vig)"/>
+    """
 
-    # 2. Activity Image Handling
-    if d.get('act_image') and d['act_image'] != EMPTY:
-        if d['is_poster']: # Crunchyroll vertical
-            act_viz = f'<image href="{d["act_image"]}" x="25" y="160" width="70" height="100" rx="8" preserveAspectRatio="xMidYMid slice" />'
-            txt_start_x = 110
-        else: # Standard Square
-            act_viz = f'<image href="{d["act_image"]}" x="25" y="170" width="80" height="80" rx="12" />'
-            txt_start_x = 120
+    # 2. Activity Card Visuals (Always Square/Compact)
+    if d['act_image']:
+        # Standard Square Layout for Games, Spotify, AND Crunchyroll now
+        act_viz = f"""
+        <image href="{d['act_image']}" x="20" y="170" width="80" height="80" rx="12" preserveAspectRatio="xMidYMid slice" />
+        <rect x="20" y="170" width="80" height="80" rx="12" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>
+        """
+        txt_start_x = 115
     else:
-        # Fallback if no activity image -> Shows a generic 'Bolt' icon
-        act_viz = f'<rect x="25" y="170" width="80" height="80" rx="12" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)"/><text x="65" y="220" text-anchor="middle" font-size="30" fill="{d["color"]}">⚡</text>'
-        txt_start_x = 120
+        # Fallback Icon
+        act_viz = f"""
+        <rect x="20" y="170" width="80" height="80" rx="12" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.1)"/>
+        <text x="60" y="218" text-anchor="middle" font-size="24" fill="{d['color']}">⚡</text>
+        """
+        txt_start_x = 115
 
     # 3. Badges Row
     badge_group = ""
     bx = 0
-    for b64 in d.get('badges', [])[:7]: # Limit 7
-        badge_group += f'<image href="{b64}" x="{bx}" y="0" width="22" height="22" class="badge-pop"/>'
+    for i, b in enumerate(d.get('badges', [])[:7]):
+        badge_group += f'<image href="{b}" x="{bx}" y="0" width="22" height="22" class="badge-pop" style="animation-delay:{i*0.05}s"/>'
         bx += 26
-    
+        
     # 4. Connections Row
     conn_group = ""
     cx = 0
-    for c64 in d.get('connections', [])[:4]:
-        # Filter white icon to grey? SVG can utilize opacity
-        conn_group += f'<image href="{c64}" x="{cx}" y="0" width="18" height="18" opacity="0.7"/>'
-        cx += 24
-
-    # 5. Platforms Indicators
-    # Draw simple paths for Desktop/Mobile/Web based on logic
-    # (Icons would be defined as <defs> or drawn paths. For compactness using emoji text approximation or simple shapes)
-    plat_svg = ""
-    # Only if present
-    px = 530
-    if 'mobile' in d['platforms']: plat_svg += f'<text x="{px}" y="25" fill="#DDD" font-size="16">📱</text>'; px -= 25
-    if 'desktop' in d['platforms']: plat_svg += f'<text x="{px}" y="25" fill="#DDD" font-size="16">🖥️</text>'; px -= 25
-    if 'web' in d['platforms']: plat_svg += f'<text x="{px}" y="25" fill="#DDD" font-size="16">🌐</text>'
+    for i, c in enumerate(d.get('connections', [])[:4]):
+         conn_group += f'<image href="{c}" x="{cx}" y="0" width="18" height="18" opacity="0.7"/>'
+         cx += 24
 
     return f"""<svg width="600" height="290" viewBox="0 0 600 290" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
       <defs>
         <style>{css}
-          .name-f {{ font-family: 'Outfit', sans-serif; font-weight: 800; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }}
-          .mono {{ font-family: 'JetBrains Mono', monospace; }}
-          .head {{ font-family: 'Rajdhani', sans-serif; font-weight: 700; letter-spacing: 1px; }}
-          .popp {{ font-family: 'Poppins', sans-serif; font-weight: 400; }}
+          .b {{ font-family: 'Outfit', sans-serif; font-weight: 800; }}
+          .m {{ font-family: 'JetBrains Mono', monospace; font-weight: 500; }}
+          .s {{ font-family: 'Pacifico', cursive; }}
+          .p {{ font-family: 'Poppins', sans-serif; font-weight: 400; }}
         </style>
-        <clipPath id="cp"><rect width="600" height="290" rx="{radius}"/></clipPath>
-        <clipPath id="ac"><circle cx="65" cy="65" r="65"/></clipPath>
         
+        <clipPath id="cp"><rect width="600" height="290" rx="{radius}"/></clipPath>
+        <clipPath id="avc"><circle cx="65" cy="65" r="65"/></clipPath>
         <filter id="heavyBlur"><feGaussianBlur stdDeviation="30"/></filter>
-        <linearGradient id="v" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#111" stop-opacity="0.3"/><stop offset="1" stop-color="#000" stop-opacity="0.95"/></linearGradient>
+        <filter id="ds"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.6"/></filter>
+        <linearGradient id="vig" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="rgba(0,0,0,0.3)"/><stop offset="1" stop-color="#000"/></linearGradient>
       </defs>
 
-      <!-- CARD BASE -->
       <g clip-path="url(#cp)">
-         <!-- Solid BG Fallback -->
-         <rect width="600" height="290" fill="#{bg_col}"/>
-         
-         <!-- Dynamic Top Banner -->
-         {bg_fill}
-         
-         <!-- Vignette Overlay -->
-         <rect width="100%" height="100%" fill="url(#v)"/>
-         
-         <!-- Outline -->
-         <rect width="596" height="286" x="2" y="2" rx="{radius}" fill="none" stroke="white" stroke-opacity="0.1" stroke-width="2"/>
-      </g>
-
-      <!-- 1. HEADER SECTION -->
-      <g transform="translate(30, 30)">
-         <!-- Profile Pic -->
-         <g>
-            <circle cx="65" cy="65" r="70" fill="#18181c" />
-            <circle cx="65" cy="65" r="66" fill="none" stroke="{d['status_color']}" stroke-width="3" stroke-dasharray="12 6" opacity="0.6"/>
-            <g clip-path="url(#ac)">
-               <image href="{d['avatar']}" width="130" height="130" />
-            </g>
-            <!-- Status Dot Cutout -->
-            <circle cx="110" cy="110" r="16" fill="#18181c"/> 
-            <circle cx="110" cy="110" r="11" fill="{d['status_color']}"/>
-         </g>
-         
-         <!-- Badges Row -->
-         <g transform="translate(150, 0)">
-            {badge_group}
-         </g>
-
-         <!-- Name & Bio -->
-         <g transform="translate(150, 40)">
-            <text x="0" y="10" class="name-f" font-size="36" fill="white">{d['name']}</text>
-            <text x="2" y="30" class="mono" font-size="10" fill="#AAA">ID: {d['sub_id']}</text>
-            
-            <foreignObject x="2" y="45" width="380" height="40">
-               <div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Poppins';font-size:12px;color:#ccc;line-height:1.2;overflow:hidden;text-overflow:ellipsis;">
-                 {d['bio']}
-               </div>
-            </foreignObject>
-         </g>
-         
-         <!-- Platforms (Top Right) -->
-         <g>{plat_svg}</g>
+        {bg_svg}
+        <!-- Glass Rim -->
+        <rect width="596" height="286" x="2" y="2" rx="{radius}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="2"/>
       </g>
       
-      <!-- 2. BOTTOM ACTIVITY PANEL -->
-      <g transform="translate(0, 0)"> <!-- Anchor point reset -->
-          {act_vis}
+      <!-- HEADER -->
+      <g transform="translate(30, 30)">
+         <circle cx="65" cy="65" r="70" fill="none" stroke="{d['color']}" stroke-width="3" stroke-dasharray="20 10" opacity="0.6" class="bg-drift"/>
+         <g clip-path="url(#avc)"><image href="{d['avatar']}" width="130" height="130"/></g>
+         <circle cx="110" cy="110" r="16" fill="#121212"/>
+         <circle cx="110" cy="110" r="11" fill="{d['status_color']}" class="pulsing"/>
+      </g>
+
+      <!-- INFO -->
+      <g transform="translate(180, 40)">
+          <text x="0" y="25" class="s" font-size="44" fill="white" filter="url(#ds)">{d['name']}</text>
+          <g transform="translate(5, -25)">{badge_group}</g>
+          <foreignObject x="0" y="45" width="380" height="50">
+             <div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Poppins',sans-serif; font-size:12px; color:#ccc; line-height:1.4; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;">
+               {d['bio']}
+             </div>
+          </foreignObject>
+      </g>
+
+      <!-- ACTIVITY -->
+      <g transform="translate(30, 190)" class="slide-in">
+          <rect width="540" height="85" rx="16" fill="rgba(30,30,35,0.6)" stroke="{d['color']}" stroke-opacity="0.3" stroke-width="1"/>
           
-          <g transform="translate({txt_start_x}, 180)">
-             <!-- Activity Header (Red/Green etc) -->
-             <text x="0" y="0" class="head" font-size="11" fill="{d['color']}">
-                 {d['app_name']}
-             </text>
-             
-             <!-- Song/Game Name -->
-             <text x="0" y="26" class="name-f" font-size="22" fill="white">
-                 {d['title'][:25]}
-             </text>
-             
-             <!-- State -->
-             <text x="0" y="46" class="popp" font-size="12" fill="#BBB">
-                 {d['detail'][:35]}
-             </text>
-             
-             <!-- Connections Row (Bottom Right) -->
-             <g transform="translate(350, 60)" opacity="0.8">
-                 {conn_group}
-             </g>
+          {act_viz}
+          
+          <g transform="translate({txt_start_x}, 22)">
+             <text x="0" y="0" class="m" font-size="9" fill="{d['color']}" letter-spacing="1.5" font-weight="bold">{d['app_name']}</text>
+             <text x="0" y="25" class="b" font-size="20" fill="white">{d['title'][:32]}</text>
+             <text x="0" y="44" class="p" font-size="12" fill="#BBB">{d['detail'][:40]}</text>
+             <g transform="translate(350, 0)">{conn_group}</g>
           </g>
       </g>
-      
+
     </svg>"""
 
 # ===========================
@@ -399,34 +319,25 @@ def render_titan_profile(d, css, radius, bg_col):
 # ===========================
 @app.route('/superbadge/<key>')
 def handler(key):
-    # Syntax fix: user mode logic
-    mode = 'user' if (key.isdigit() and len(str(key)) > 15) else 'discord'
     args = request.args
-    
-    # 1. FETCH DATA
+    mode = 'user' if (key.isdigit() and len(str(key)) > 15) else 'discord'
     data = fetch_data(key, mode, args)
-
-    if not data:
-         # Syntax Error fix: String properly closed
-         return Response("""<svg xmlns="http://www.w3.org/2000/svg" width="600" height="100"><rect width="100%" height="100%" fill="#111"/><text x="20" y="60" fill="red" font-family="sans-serif">USER FETCH FAILED</text></svg>""", mimetype="image/svg+xml")
-
-    # 2. RENDER SETTINGS
-    bg_col = args.get('bg', '111111').replace('#','')
-    radius = args.get('borderRadius', '30').replace('px', '')
     
-    # Animations Config
+    if not data:
+         return Response('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="100"><rect width="100%" height="100%" fill="#111"/><text x="20" y="50" fill="red" font-family="sans-serif">ERR: NO DATA</text></svg>', mimetype="image/svg+xml")
+
     bg_an = args.get('bgAnimations', 'true')
     fg_an = args.get('fgAnimations', 'true')
+    bg_col = args.get('bg', '111111').replace('#','')
+    radius = args.get('borderRadius', '30').replace('px', '') 
 
     css = get_css(bg_an, fg_an)
+    svg = render_profile(data, css, radius, bg_col)
     
-    if mode == 'discord':
-        # Simple server render logic if needed (reuse user layout but simplified)
-        svg = render_mega_profile(data, css, radius, bg_col)
-    else:
-        svg = render_mega_profile(data, css, radius, bg_col)
-
     return Response(svg, mimetype="image/svg+xml", headers={"Cache-Control": "no-cache, max-age=0"})
+
+@app.route('/')
+def home(): return "TITAN UNIFIED V36"
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
