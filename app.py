@@ -11,19 +11,18 @@ app = Flask(__name__)
 # ===========================
 #        CONFIGURATION
 # ===========================
-# Generic user agent to avoid blocking
-HEADERS = {'User-Agent': 'HyperBadge/Fixed-v28'}
+CACHE = {} 
+HEADERS = {'User-Agent': 'HyperBadge/LayoutFix-v29'}
 EMPTY = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
-CACHE = {}
 
 # ===========================
 #      HELPER FUNCTIONS
 # ===========================
 
 def sanitize_xml(text):
-    """Clean text for XML"""
     if not text: return ""
     text = str(text)
+    # Remove control chars (ASCII 0-31) except tab/newline
     text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', text)
     return html.escape(text, quote=True)
 
@@ -31,6 +30,7 @@ def get_base64(url):
     """Download image -> Base64"""
     if not url: return EMPTY
     try:
+        # Lanyard proxies sometimes return mp: links
         if url.startswith("mp:"):
             url = f"https://media.discordapp.net/{url[3:]}"
             
@@ -42,23 +42,24 @@ def get_base64(url):
     return EMPTY
 
 def get_css(bg_anim, fg_anim):
-    # Imports
-    css = "@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@800&amp;family=Rajdhani:wght@600;800&amp;family=Outfit:wght@500;900&amp;display=swap');"
+    # CSS: Modern Fonts
+    css = "@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@800&amp;family=Rajdhani:wght@600;800&amp;family=Outfit:wght@500;800&amp;display=swap');"
     
-    # Keyframes
+    # CSS: Keyframes
     keyframes = """
-    @keyframes fade { 0%{opacity:0.3} 50%{opacity:0.6} 100%{opacity:0.3} }
-    @keyframes d { from{transform:scale(1.1) rotate(0deg)} to{transform:scale(1.2) rotate(2deg)} }
-    @keyframes p { 0%{box-shadow: 0 0 0 0 rgba(88, 101, 242, 0.4);} 70%{box-shadow: 0 0 0 10px rgba(88, 101, 242, 0);} 100%{box-shadow: 0 0 0 0 rgba(88, 101, 242, 0);} }
-    @keyframes slide { 0%{transform:translateX(-10px);opacity:0} 100%{transform:translateX(0);opacity:1} }
+    @keyframes fade { 0%{opacity:0.4} 50%{opacity:0.8} 100%{opacity:0.4} }
+    @keyframes d { from{transform:scale(1.1) rotate(0deg)} to{transform:scale(1.15) rotate(1deg)} }
+    @keyframes p { 0%{stroke-width:2px; opacity:0.8} 50%{stroke-width:4px; opacity:1} 100%{stroke-width:2px; opacity:0.8} }
+    @keyframes slide { 0%{transform:translateX(-15px);opacity:0} 100%{transform:translateX(0);opacity:1} }
+    @keyframes hover { 0%{transform:translateY(0)} 50%{transform:translateY(-4px)} 100%{transform:translateY(0)} }
     """
     
     classes = ""
-    # Only add animations if 'false' is NOT passed
+    # Animations Config
     if str(bg_anim).lower() != 'false':
         classes += ".bg-drift{animation:d 40s linear infinite alternate} .pulse-bg{animation:fade 4s infinite}"
     if str(fg_anim).lower() != 'false':
-        classes += ".slide-in{animation:slide 1s ease-out} .status-pulse{animation:p 2s infinite}"
+        classes += ".slide-in{animation:slide 0.8s ease-out} .status-pulse{animation:p 2s infinite} .float{animation:hover 6s ease-in-out infinite}"
 
     return css + keyframes + classes
 
@@ -76,13 +77,8 @@ def fetch_data(key, type_mode, args):
             d = r.json()
             g = d.get('guild')
             
-            # Error handling for invalid invites
             if not g: 
-                return {
-                    "type": "error", "name": "INVALID INVITE", 
-                    "title": "Error", "detail": "Server Not Found", "color": "#FF0000",
-                    "avatar": EMPTY, "bg_image": None
-                }
+                return None
             
             return {
                 "type": "discord",
@@ -91,7 +87,8 @@ def fetch_data(key, type_mode, args):
                 "detail": f"{d.get('approximate_presence_count',0):,} Online",
                 "color": "#5865F2", 
                 "avatar": get_base64(f"https://cdn.discordapp.com/icons/{g['id']}/{g['icon']}.png") if g.get('icon') else EMPTY,
-                "bg_image": None
+                "bg_image": None,
+                "app_name": "INVITE"
             }
 
         # --- 2. LANYARD USER ---
@@ -99,48 +96,51 @@ def fetch_data(key, type_mode, args):
             r = requests.get(f"https://api.lanyard.rest/v1/users/{key}", headers=HEADERS, timeout=4)
             response_json = r.json()
             
-            # Safely check success before diving into data
             if not response_json.get('success'):
                  return {
-                    "type": "error", "name": "USER NOT FOUND", 
-                    "title": "Monitor Active", "detail": "Join discord.gg/lanyard", "color": "#555",
-                    "avatar": EMPTY, "bg_image": None
+                    "type": "error", "name": "User Not Found", "title": "Check ID", 
+                    "detail": "Join Lanyard Server", "color": "#555",
+                    "avatar": EMPTY, "bg_image": None, "app_name": "ERROR"
                 }
             
             d = response_json['data']
             u = d['discord_user']
             status = d['discord_status']
             
-            # --- ACTIVITY PARSING ---
+            # ACTIVITY PARSING
             main_activity = None
             
             # A. Spotify Priority
             if d.get('spotify'):
                 s = d['spotify']
                 main_activity = {
-                    "app": "Spotify",
+                    "app": "LISTENING TO SPOTIFY",
                     "title": s['song'],
                     "detail": s['artist'],
                     "image": s.get('album_art_url'),
                     "is_spotify": True
                 }
             
-            # B. Rich Presence Scan
+            # B. Rich Presence (Images)
             if not main_activity:
                 for act in d.get('activities', []):
-                    # Skip custom status (Type 4) initially to prioritize games
-                    if act['type'] == 4: continue
+                    if act['type'] == 4: continue # Skip status message
                     
                     img_url = None
-                    # Attempt to get large asset image
                     if 'assets' in act and 'large_image' in act['assets']:
                         aid = act['application_id']
                         i_id = act['assets']['large_image']
                         if i_id.startswith("mp:"): img_url = f"https://media.discordapp.net/{i_id[3:]}"
                         else: img_url = f"https://cdn.discordapp.com/app-assets/{aid}/{i_id}.png"
                     
+                    # Make nicer App names
+                    app_label = act['name'].upper()
+                    if act['type'] == 0: app_label = f"PLAYING {app_label}"
+                    if act['type'] == 2: app_label = f"LISTENING TO {app_label}"
+                    if act['type'] == 3: app_label = f"WATCHING {app_label}"
+
                     main_activity = {
-                        "app": act['name'],
+                        "app": app_label,
                         "title": act.get('details', act['name']),
                         "detail": act.get('state', ''),
                         "image": img_url,
@@ -150,13 +150,13 @@ def fetch_data(key, type_mode, args):
             
             # C. Fallback / Custom Status
             if not main_activity:
-                custom = "VIBING"
+                custom = "Vibing"
                 for act in d.get('activities', []):
                     if act['type'] == 4: custom = act.get('state', 'Vibing'); break
                 
-                status_text = "ONLINE" if status=="online" else args.get('idleMessage', 'IDLE').upper()
+                status_label = "ONLINE" if status=="online" else args.get('idleMessage', 'IDLE').upper()
                 main_activity = {
-                    "app": status_text,
+                    "app": status_label,
                     "title": custom,
                     "detail": "",
                     "image": None,
@@ -166,25 +166,22 @@ def fetch_data(key, type_mode, args):
             cols = {"online": "#00FF99", "idle": "#FFBB00", "dnd": "#FF4444", "offline": "#555", "spotify": "#1DB954"}
             acc = cols['spotify'] if main_activity.get('is_spotify') else cols.get(status, "#5865F2")
             
-            # Name Priority: Force > Global > Username
-            display_name = u['username']
+            d_name = u['username']
             if args.get('showDisplayName', 'true').lower() == 'true' and u.get('global_name'):
-                display_name = u['global_name']
-            if force_name:
-                display_name = force_name
-
+                d_name = u['global_name']
+            
             return {
                 "type": "user",
-                "name": sanitize_xml(display_name),
+                "name": sanitize_xml(force_name if force_name else d_name),
                 "title": sanitize_xml(main_activity['title']),
                 "detail": sanitize_xml(main_activity['detail']),
-                "app_name": sanitize_xml(main_activity['app']).upper(),
+                "app_name": sanitize_xml(main_activity['app']),
                 "color": acc,
                 "avatar": get_base64(f"https://cdn.discordapp.com/avatars/{u['id']}/{u['avatar']}.png"),
                 "bg_image": get_base64(main_activity['image']) if main_activity['image'] else None,
             }
     except Exception as e:
-        print(f"FETCH ERROR: {e}")
+        print(f"Error: {e}")
         return None
 
 # ===========================
@@ -193,88 +190,135 @@ def fetch_data(key, type_mode, args):
 
 def render_cinematic(d, css, radius, bg_col):
     """
-    Fixed Variable Names:
-    d['avatar'] is now used correctly.
-    d['bg_image'] checks handles missing backgrounds.
+    Fixed Layout Version (v29)
+    - Adjusted Transforms: Text is higher, Image is wider.
+    - Improved ClipPaths: Circles and Rects align mathematically.
     """
     
-    # 1. Background Logic
+    # 1. BG Image or Gradient
     if d.get('bg_image'):
-        # Blurred Activity Background
         bg = f"""
-        <image href="{d['bg_image']}" width="120%" height="120%" x="-10%" y="-10%" preserveAspectRatio="xMidYMid slice" opacity="0.6" filter="url(#blur)" class="bg-drift"/>
-        <rect width="100%" height="100%" fill="url(#vig)"/>
+        <image href="{d['bg_image']}" width="120%" height="120%" x="-10%" y="-10%" preserveAspectRatio="xMidYMid slice" opacity="0.5" filter="url(#blur)" class="bg-drift"/>
+        <rect width="100%" height="100%" fill="url(#vignette)"/>
         """
+        # Shadow overlay to make text pop against bright art
+        text_overlay = '<rect x="0" y="80" width="100%" height="120" fill="url(#bottomShade)"/>'
     else:
-        # Default Dark Gradient
         bg = f"""
         <rect width="100%" height="100%" fill="#{bg_col}" />
-        <circle cx="0" cy="200" r="150" fill="{d['color']}" opacity="0.3" filter="url(#blur)"/>
-        <circle cx="500" cy="0" r="150" fill="#5865F2" opacity="0.3" filter="url(#blur)"/>
+        <circle cx="0" cy="200" r="160" fill="{d['color']}" opacity="0.3" filter="url(#blur)"/>
+        <circle cx="500" cy="0" r="180" fill="#5865F2" opacity="0.3" filter="url(#blur)"/>
         <rect width="100%" height="100%" fill="url(#grain)"/>
         """
+        text_overlay = ""
 
-    # 2. Thumbnail Logic (If Rich Presence)
-    thumb_grp = ""
-    text_width = 460 # Default wide text
+    # 2. Activity Card (Right Side)
+    # Widened container, added aspect ratio stroke
+    card_group = ""
+    text_max_chars = 35 # Truncate long text so it doesn't hit image
     
     if d.get('bg_image'):
-        text_width = 340
-        thumb_grp = f"""
-        <g transform="translate(380, 20)" class="slide-in">
-            <rect width="100" height="160" rx="10" fill="rgba(0,0,0,0.5)" stroke="rgba(255,255,255,0.2)"/>
-            <image href="{d['bg_image']}" width="100" height="160" rx="10" preserveAspectRatio="xMidYMid slice" />
-            <rect width="100" height="160" rx="10" fill="none" stroke="{d['color']}" stroke-width="2" opacity="0.5"/>
+        text_max_chars = 22 # Shorten text if image present
+        card_group = f"""
+        <g transform="translate(365, 20)" class="slide-in float">
+            <!-- Shadow -->
+            <rect x="0" y="5" width="115" height="160" rx="10" fill="black" opacity="0.4" filter="url(#shadow)"/>
+            
+            <!-- Art Container -->
+            <g clip-path="url(#artClip)">
+               <image href="{d['bg_image']}" width="115" height="160" preserveAspectRatio="xMidYMid slice" />
+            </g>
+            
+            <!-- Glass Stroke Border -->
+            <rect width="115" height="160" rx="10" fill="none" stroke="{d['color']}" stroke-width="2" stroke-opacity="0.8" />
         </g>
         """
+
+    # 3. Truncate Text safely
+    title_display = d['title']
+    if len(title_display) > text_max_chars: title_display = title_display[:text_max_chars] + ".."
+    
+    detail_display = d['detail']
+    if len(detail_display) > 40: detail_display = detail_display[:38] + ".."
+
 
     return f"""<svg width="500" height="200" viewBox="0 0 500 200" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
       <defs>
         <style>{css}
-          .b {{ font-family: 'Outfit', sans-serif; font-weight: 900; }}
+          .b {{ font-family: 'Outfit', sans-serif; font-weight: 800; }}
           .m {{ font-family: 'JetBrains Mono', monospace; font-weight: 500; }}
-          .h {{ font-family: 'Rajdhani', sans-serif; font-weight: 700; letter-spacing: 2px; }}
+          .h {{ font-family: 'Rajdhani', sans-serif; font-weight: 700; letter-spacing: 1px; }}
         </style>
         
         <clipPath id="cp"><rect width="500" height="200" rx="{radius}"/></clipPath>
-        <clipPath id="av"><circle cx="45" cy="45" r="45"/></clipPath>
-        <filter id="blur"><feGaussianBlur stdDeviation="15"/></filter>
-        <linearGradient id="vig" x1="0" x2="1" y1="0" y2="1">
-            <stop offset="0%" stop-color="#09090b" stop-opacity="0.4"/>
-            <stop offset="100%" stop-color="#09090b" stop-opacity="0.9"/>
+        <clipPath id="avClip"><circle cx="40" cy="40" r="40"/></clipPath>
+        <clipPath id="artClip"><rect width="115" height="160" rx="10"/></clipPath>
+        
+        <filter id="blur"><feGaussianBlur stdDeviation="20"/></filter>
+        <filter id="shadow"><feDropShadow dx="0" dy="4" stdDeviation="4" flood-opacity="0.5"/></filter>
+        
+        <!-- Ambient Vignette for readability -->
+        <linearGradient id="vignette" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stop-color="#000" stop-opacity="0.3"/>
+            <stop offset="100%" stop-color="#000" stop-opacity="0.8"/>
         </linearGradient>
-        <pattern id="grain" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="1" height="1" fill="white" opacity="0.03"/></pattern>
+        
+        <!-- Text Contrast Backing -->
+        <linearGradient id="bottomShade" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#000" stop-opacity="0"/>
+            <stop offset="100%" stop-color="#000" stop-opacity="0.8"/>
+        </linearGradient>
+        
+        <pattern id="grain" width="100" height="100" patternUnits="userSpaceOnUse"><rect width="1" height="1" fill="white" opacity="0.05"/></pattern>
       </defs>
 
-      <!-- BASE -->
+      <!-- CARD BACKGROUND -->
       <g clip-path="url(#cp)">
         {bg}
-        <rect width="496" height="196" x="2" y="2" rx="{radius}" fill="none" stroke="rgba(255,255,255,0.1)" stroke-width="2"/>
+        {text_overlay}
+        <!-- Inner Border Rim -->
+        <rect width="496" height="196" x="2" y="2" rx="{radius}" fill="none" stroke="white" stroke-opacity="0.1" stroke-width="2"/>
       </g>
       
-      {thumb_grp}
+      <!-- CARD THUMBNAIL (RIGHT) -->
+      {card_group}
 
-      <!-- CONTENT -->
-      <g transform="translate(30, 40)">
-         <!-- Avatar -->
-         <g>
-            <circle cx="45" cy="45" r="48" fill="none" stroke="{d['color']}" stroke-width="3" stroke-dasharray="20 10" class="pulse-bg"/>
-            <g clip-path="url(#av)"><image href="{d['avatar']}" width="90" height="90"/></g>
-            <circle cx="80" cy="80" r="12" fill="{d['color']}" stroke="#111" stroke-width="3"/>
-         </g>
+      <!-- CONTENT (LEFT ALIGNED) -->
+      
+      <!-- Avatar Cluster: Top Left (Moved for better spacing) -->
+      <g transform="translate(30, 30)">
+         <!-- Pulse Ring -->
+         <circle cx="40" cy="40" r="43" fill="none" stroke="{d['color']}" stroke-width="2" stroke-dasharray="15 5" opacity="0.6" class="status-pulse"/>
          
-         <!-- Text Data -->
-         <g transform="translate(0, 115)">
-            <text x="0" y="0" class="h" font-size="12" fill="{d['color']}">{d.get('app_name', 'STATUS')}</text>
-            <text x="0" y="28" class="b slide-in" font-size="26" fill="white" style="text-shadow: 0 4px 10px rgba(0,0,0,0.5)">{d['title'][:22]}</text>
-            <text x="0" y="46" class="m" font-size="13" fill="#CCC">{d['detail'][:35]}</text>
-         </g>
+         <!-- Avatar Image -->
+         <g clip-path="url(#avClip)"><image href="{d['avatar']}" width="80" height="80"/></g>
+         
+         <!-- Online/Status Indicator Dot -->
+         <circle cx="70" cy="70" r="12" fill="{d['color']}" stroke="#111" stroke-width="3" filter="url(#shadow)"/>
+         
+         <!-- Display Name Next to Avatar (Header Style) -->
+         <text x="100" y="25" class="b" font-size="14" fill="#AAA">USER ID</text>
+         <text x="100" y="55" class="b" font-size="28" fill="white" style="text-shadow: 0 2px 5px rgba(0,0,0,0.5)">{d['name']}</text>
+      </g>
+      
+      <!-- Activity Text Cluster: Bottom Left (Raised y coord to fit) -->
+      <g transform="translate(30, 145)" class="slide-in">
+         <!-- Small Label -->
+         <text x="0" y="-30" class="h" font-size="11" fill="{d['color']}" letter-spacing="2">
+            {d['app_name']}
+         </text>
+         
+         <!-- Main Title (e.g. Song Name) -->
+         <text x="0" y="0" class="b" font-size="24" fill="white" style="text-shadow: 0 2px 4px rgba(0,0,0,0.8)">
+            {title_display}
+         </text>
+         
+         <!-- Detail (e.g. Artist/Chapter) -->
+         <text x="0" y="22" class="m" font-size="12" fill="#CCC">
+            {detail_display}
+         </text>
       </g>
 
-      <!-- Watermark -->
-      <g transform="translate(470, 30)" text-anchor="end">
-          <text x="0" y="0" class="b" font-size="16" fill="white" opacity="0.5">{d['name'].upper()}</text>
-      </g>
     </svg>"""
 
 # ===========================
@@ -284,29 +328,29 @@ def render_cinematic(d, css, radius, bg_col):
 @app.route('/superbadge/<key>')
 def handler(key):
     args = request.args
-    # Auto-Detect User vs Server
+    # Detect Mode (Simple numeric check for User ID)
     mode = 'user' if (key.isdigit() and len(str(key)) > 15) else 'discord'
     
     data = fetch_data(key, mode, args)
-    if not data:
-        # Fallback for catastrophic API failure
-        return Response('<svg xmlns="http://www.w3.org/2000/svg" width="500" height="200"><rect width="100%" height="100%" fill="#111"/><text x="250" y="100" text-anchor="middle" fill="red" font-family="sans-serif">SYSTEM FAILURE</text></svg>', mimetype="image/svg+xml")
+    
+    if not data or data.get('type') == 'error':
+         return Response('<svg xmlns="http://www.w3.org/2000/svg" width="500" height="200"><rect width="100%" height="100%" fill="#111"/><text x="50%" y="50%" fill="red" text-anchor="middle" font-family="sans-serif">LOAD ERROR - CHECK ID</text></svg>', mimetype="image/svg+xml")
 
-    # Styling settings
+    # Render settings
     bg_an = args.get('bgAnimations', 'true')
     fg_an = args.get('fgAnimations', 'true')
     bg_col = args.get('bg', '09090b').replace('#','')
-    radius = args.get('borderRadius', '25').replace('px', '')
+    # Use standard 200px height now, radius default 20
+    radius = args.get('borderRadius', '20').replace('px', '') 
 
     css = get_css(bg_an, fg_an)
 
-    # Render
     svg = render_cinematic(data, css, radius, bg_col)
     
     return Response(svg, mimetype="image/svg+xml", headers={"Cache-Control": "no-cache, max-age=0"})
 
 @app.route('/')
-def home(): return "TITAN ACTIVITY ENGINE ONLINE (V28 FIX)"
+def home(): return "TITAN ACTIVITY DISPLAY V29 (FIXED LAYOUT)"
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
