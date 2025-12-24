@@ -4,7 +4,7 @@
 
 <!-- REPLACE 'your-app-name' WITH YOUR ACTUAL RENDER APP NAME BELOW -->
 <a href="https://github.com/zapgaming">
-  <img src="https://badge-oq5l.onrender.com/superbadge/1173155162093785099?style=chillax&roastMode=false&idleMessage=VIBING&fgAnimations=false&aifeatures=false" alt="HyperBadge" height="150"/>
+  <img src="https://badge-beta.onrender.com/superbadge/1173155162093785099?fgAnimations=false" alt="HyperBadge" height="150"/>
 </a>
 
 <p align="center">
