@@ -1,332 +1,298 @@
 import os
 import time
-import json
-import math
 import requests
 import datetime
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify
 from flask_cors import CORS
 
 app = Flask(__name__)
 CORS(app)
 
 # =======================
-#    HYPER CONFIG
+#    CONFIGURATION
 # =======================
-CACHE = {}
-CACHE_TTL = 15  # Seconds
 HEADERS = {
-    'User-Agent': 'Titan-GodMode/v61-Fixed'
+    'User-Agent': 'Titan-API/v63 (Hyper-Aggregator)'
 }
 
-LINK_TEMPLATES = {
-    "github": "https://github.com/{}", "twitter": "https://x.com/{}",
-    "reddit": "https://reddit.com/user/{}", "twitch": "https://twitch.tv/{}",
-    "youtube": "https://youtube.com/channel/{}", "spotify": "https://open.spotify.com/user/{}",
-    "steam": "https://steamcommunity.com/profiles/{}", "facebook": "https://facebook.com/{}",
-    "instagram": "https://instagram.com/{}", "tiktok": "https://tiktok.com/@{}",
+CACHE = {}
+CACHE_TTL = 15  # 15 seconds cache
+
+# 1. ICON SOURCE
+ICON_BASE = "https://cdn.jsdelivr.net/npm/simple-icons@v11/icons"
+
+# 2. DEEP LINKING MAP
+# This builds real URLs for connections found in the profile
+LINK_PATTERNS = {
+    "github": "https://github.com/{}",
+    "twitter": "https://x.com/{}",
+    "x": "https://x.com/{}",
+    "reddit": "https://reddit.com/u/{}",
+    "twitch": "https://twitch.tv/{}",
+    "youtube": "https://youtube.com/{}",
+    "steam": "https://steamcommunity.com/profiles/{}", # DCDN typically returns ID for Steam
+    "spotify": "https://open.spotify.com/user/{}",
+    "instagram": "https://instagram.com/{}",
+    "tiktok": "https://tiktok.com/@{}",
+    "facebook": "https://facebook.com/{}",
     "xbox": "https://account.xbox.com/en-us/Profile?GamerTag={}",
-    "domain": "https://{}", "bsky": "https://bsky.app/profile/{}"
+    "paypal": "https://paypal.me/{}",
+    "ebay": "https://www.ebay.com/usr/{}",
+    "domain": "https://{}",
+    "bsky": "https://bsky.app/profile/{}"
 }
 
-ICON_CDN_BASE = "https://cdn.jsdelivr.net/npm/simple-icons@v11/icons"
-
 # =======================
-#    HELPERS
+#    MATH & HELPERS
 # =======================
 
-def snowflake_to_time(snowflake):
-    """Calculates Account Creation Date from Discord ID"""
-    try:
-        snowflake = int(snowflake)
-        timestamp = ((snowflake >> 22) + 1420070400000) / 1000
-        dt = datetime.datetime.fromtimestamp(timestamp, datetime.timezone.utc)
-        return {
-            "iso": dt.isoformat(),
-            "formatted": dt.strftime("%b %d, %Y"),
-            "unix": int(timestamp),
-            "age_days": (datetime.datetime.now(datetime.timezone.utc) - dt).days
-        }
-    except: return None
+def get_cdn_url(cat, id, hash_val, anim=False, size=512):
+    if not hash_val: return None
+    ext = "gif" if (anim and str(hash_val).startswith("a_")) else "png"
+    return f"https://cdn.discordapp.com/{cat}/{id}/{hash_val}.{ext}?size={size}"
 
-def get_luminance(hex_color):
-    """Calculates if a color is 'light' or 'dark'"""
-    if not hex_color or not isinstance(hex_color, str) or not hex_color.startswith('#'): 
-        return "dark" # Safe default
-    color = hex_color.lstrip('#')
-    try:
-        if len(color) == 6:
-            rgb = tuple(int(color[i:i+2], 16) for i in (0, 2, 4))
-            lum = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2])
-            return "light" if lum > 128 else "dark"
-    except: pass
-    return "dark"
-
-def calc_time_math(start, end):
+def get_calc_time(start, end):
+    """Generates progress math for Music/Movies"""
     now = time.time() * 1000
-    try:
-        s = int(start)
-        e = int(end) if end else None
-        
-        elapsed_ms = now - s
-        
-        # Human Readable Elapsed
-        seconds = int(elapsed_ms / 1000)
-        minutes, seconds = divmod(seconds, 60)
-        hours, minutes = divmod(minutes, 60)
-        readable = f"{minutes:02d}:{seconds:02d}"
-        if hours > 0: readable = f"{hours}:{readable}"
-        
-        obj = {
-            "start_unix": s,
-            "elapsed_ms": elapsed_ms,
-            "human_elapsed": readable,
-        }
-        
-        if e:
-            total = e - s
-            progress = min(max((elapsed_ms / total) * 100, 0), 100) if total > 0 else 0
-            
-            # Remaining
-            rem_ms = e - now
-            rem_s = int(rem_ms / 1000)
-            rem_m, rem_s = divmod(rem_s, 60)
-            
-            obj.update({
-                "end_unix": e,
-                "total_duration_ms": total,
-                "progress_percent": round(progress, 2),
-                "human_remaining": f"-{rem_m}:{rem_s:02d}",
-                "is_seekable": True
-            })
-        else:
-            obj["is_seekable"] = False
-            obj["progress_percent"] = 0
-            
-        return obj
-    except:
-        return None
-
-def resolve_discord_asset(app_id, asset_id):
-    if not asset_id: return None
-    if asset_id.startswith("mp:"):
-        return f"https://media.discordapp.net/{asset_id.replace('mp:','')}"
-    if asset_id.startswith("spotify:"):
-        return f"https://i.scdn.co/image/{asset_id.replace('spotify:','')}"
-    return f"https://cdn.discordapp.com/app-assets/{app_id}/{asset_id}.png"
-
-def resolve_icon(icon_type):
-    slug = icon_type.replace(".", "dot").lower()
-    return f"{ICON_CDN_BASE}/{slug}.svg"
-
-def format_activity(act):
-    if not act: return None
-    app_id = act.get('application_id')
-    assets = act.get('assets', {})
     
-    # Image resolution
-    large_img = resolve_discord_asset(app_id, assets.get('large_image'))
-    small_img = resolve_discord_asset(app_id, assets.get('small_image'))
-
-    # Timestamps
-    time_meta = None
-    timestamps = act.get('timestamps')
-    if timestamps:
-        time_meta = calc_time_math(timestamps.get('start'), timestamps.get('end'))
-
-    return {
-        "type_id": "rich_presence",
-        "name": act.get('name'),
-        "header": "PLAYING" if act.get('type')==0 else "ACTIVITY",
-        "title": act.get('details'),
-        "description": act.get('state'),
-        "assets": {
-            "large_image": large_img,
-            "large_text": assets.get('large_text'),
-            "small_image": small_img,
-            "small_text": assets.get('small_text')
-        },
-        "timestamps": time_meta,
-        "app_id": app_id
+    obj = {
+        "start_unix": start,
+        "end_unix": end,
+        "now_unix": now
     }
-
-# =======================
-#    CORE PROCESSOR
-# =======================
-
-@app.route('/api/godmode/<user_id>')
-def god_mode(user_id):
-    start_time = time.time()
     
-    # Check Cache
-    if user_id in CACHE:
-        if start_time - CACHE[user_id]['ts'] < CACHE_TTL:
-            return jsonify(CACHE[user_id]['payload'])
+    if start:
+        elapsed = now - start
+        obj['elapsed_ms'] = elapsed
+        obj['elapsed_str'] = time.strftime('%H:%M:%S', time.gmtime(elapsed/1000)) if elapsed > 3600000 else time.strftime('%M:%S', time.gmtime(elapsed/1000))
 
-    # Initialize Containers (Prevents "not defined" errors)
-    dcdn_data = {}
-    dcdn_root = {} # Default root if DCDN fails
-    lanyard_data = {}
-    
-    # 1. FETCH DCDN
-    try:
-        r1 = requests.get(f"https://dcdn.dstn.to/profile/{user_id}", headers=HEADERS, timeout=4)
-        if r1.status_code == 200: 
-            dcdn_root = r1.json()
-            dcdn_data = dcdn_root.get('user', {})
-    except: pass
-
-    # 2. FETCH LANYARD
-    try:
-        r2 = requests.get(f"https://api.lanyard.rest/v1/users/{user_id}", headers=HEADERS, timeout=4)
-        if r2.status_code == 200:
-            lan = r2.json()
-            if lan['success']: lanyard_data = lan['data']
-    except: pass
-
-    # VALIDATION
-    if not lanyard_data and not dcdn_data:
-        return jsonify({"error": "User not found", "success": False}), 404
-
-    l_user = lanyard_data.get('discord_user', {})
-    
-    # ==========================
-    #   BUILDING DATA
-    # ==========================
-    
-    # 1. IDENTITY (Fixing variables here)
-    username = l_user.get('username') or dcdn_data.get('username')
-    display_name = l_user.get('global_name') or dcdn_data.get('global_name') or username
-    
-    avatar_id = l_user.get('avatar') or dcdn_data.get('avatar')
-    banner_id = dcdn_data.get('banner') 
-    
-    accent_color = dcdn_data.get('accent_color')
-    if accent_color: accent_hex = f"#{accent_color:06x}"
-    else: accent_hex = "#5865F2"
-    
-    avatar_url = f"https://cdn.discordapp.com/avatars/{user_id}/{avatar_id}" if avatar_id else None
-    banner_url = None
-    if banner_id:
-        ext = "gif" if banner_id.startswith("a_") else "png"
-        banner_url = f"https://cdn.discordapp.com/banners/{user_id}/{banner_id}.{ext}?size=1024"
-        
-    created_at = snowflake_to_time(user_id) # Was named creation_meta in v60
-
-    # 2. STATUS
-    discord_status = lanyard_data.get('discord_status', 'offline')
-    active_platforms = []
-    for p in ['desktop', 'mobile', 'web']:
-        if lanyard_data.get(f'active_on_discord_{p}'): active_platforms.append(p)
-
-    # 3. CONNECTIONS & BADGES (Safe DCDN access)
-    connections = []
-    for c in dcdn_root.get('connected_accounts', []):
-        c_type = c['type']
-        link = LINK_TEMPLATES.get(c_type, "#").format(c['id'] if c_type=='steam' else c['name'])
-        connections.append({
-            "platform": c_type,
-            "username": c['name'],
-            "url": link,
-            "icon": resolve_icon(c_type)
-        })
-
-    badges = []
-    for b in dcdn_root.get('badges', []):
-        badges.append({
-            "id": b.get('id'),
-            "icon_url": f"https://cdn.discordapp.com/badge-icons/{b['icon']}.png",
-            "name": b.get('id') # Fallback description
-        })
-
-    # 4. ACTIVITY SCANNING
-    processed_activities = []
-    current_spotify = None
-    
-    # Spotify
-    if lanyard_data.get('spotify'):
-        s = lanyard_data['spotify']
-        time_meta = calc_time_math(s['timestamps']['start'], s['timestamps']['end'])
-        
-        current_spotify = {
-            "track": s['song'],
-            "artist": s['artist'],
-            "album": s['album'],
-            "art_url": s['album_art_url'],
-            "timestamps": time_meta
-        }
-        # Add Spotify as an Activity for "Smart View" consistency
-        processed_activities.append({
-            "type_id": "spotify",
-            "header": "LISTENING TO",
-            "title": s['song'],
-            "description": s['artist'],
-            "assets": { "large_image": s['album_art_url'] },
-            "timestamps": time_meta,
-            "is_music": True
-        })
-
-    # Rich Presence
-    for act in lanyard_data.get('activities', []):
-        # Skip Custom Status and Spotify Mirror
-        if act['type'] == 4: continue
-        if act.get('id') == "spotify:1": continue
-        
-        processed = format_activity(act)
-        processed_activities.append(processed)
-
-    # Custom Status
-    custom_status = None
-    for act in lanyard_data.get('activities', []):
-        if act['type'] == 4:
-            emoji_url = None
-            if act.get('emoji') and act['emoji'].get('id'):
-                ext = "gif" if act['emoji'].get('animated') else "png"
-                emoji_url = f"https://cdn.discordapp.com/emojis/{act['emoji']['id']}.{ext}"
+    if start and end:
+        total = end - start
+        if total > 0:
+            pct = min(max((elapsed / total) * 100, 0), 100)
+            obj['duration_ms'] = total
+            obj['progress_percent'] = round(pct, 4) # Precision for smooth bars
             
-            custom_status = {
-                "text": act.get('state', ''),
-                "emoji_url": emoji_url
-            }
-            break
+            # Remaining time
+            left = end - now
+            prefix = "-" if left > 0 else "+"
+            obj['remaining_str'] = prefix + time.strftime('%M:%S', time.gmtime(abs(left)/1000))
+    
+    return obj
 
-    # 5. RESPONSE CONSTRUCTION
+def resolve_rp_img(app_id, img_id):
+    if not img_id: return None
+    if str(img_id).startswith("mp:"): return f"https://media.discordapp.net/{img_id.replace('mp:','')}"
+    if str(img_id).startswith("spotify:"): return f"https://i.scdn.co/image/{img_id.replace('spotify:','')}"
+    return f"https://cdn.discordapp.com/app-assets/{app_id}/{img_id}.png"
+
+# =======================
+#    MAIN ENDPOINT
+# =======================
+
+@app.route('/api/data/<uid>')
+def get_user_full(uid):
+    now_ts = time.time()
+    
+    # --- CACHE CHECK ---
+    if uid in CACHE:
+        if now_ts - CACHE[uid]['time'] < CACHE_TTL:
+            return jsonify(CACHE[uid]['data'])
+
+    # --- 1. FETCH RAW DATA ---
+    lanyard = {}
+    dcdn = {}
+    
+    # Fetch DCDN (Profile Meta)
+    try:
+        r1 = requests.get(f"https://dcdn.dstn.to/profile/{uid}", headers=HEADERS, timeout=4)
+        if r1.status_code == 200: dcdn = r1.json()
+    except: pass
+    
+    # Fetch Lanyard (Presence)
+    try:
+        r2 = requests.get(f"https://api.lanyard.rest/v1/users/{uid}", headers=HEADERS, timeout=4)
+        if r2.status_code == 200: lanyard = r2.json().get('data', {})
+    except: pass
+    
+    if not lanyard and not dcdn:
+        return jsonify({"success": False, "error": "USER_NOT_FOUND"}), 404
+
+    u_lan = lanyard.get('discord_user', {})
+    u_dcdn = dcdn.get('user', {})
+
+    # --- 2. IDENTITY PROCESSING ---
+    user_id = uid
+    username = u_lan.get('username') or u_dcdn.get('username')
+    display_name = u_lan.get('global_name') or u_dcdn.get('global_name') or username
+    discriminator = u_lan.get('discriminator') or "0"
+
+    # Avatar
+    av_hash = u_lan.get('avatar') or u_dcdn.get('avatar')
+    avatar_url = get_cdn_url("avatars", uid, av_hash, anim=True) or "https://cdn.discordapp.com/embed/avatars/0.png"
+    
+    # Banner
+    bn_hash = u_dcdn.get('banner') # Lanyard banners often buggy, use DCDN
+    banner_url = get_cdn_url("banners", uid, bn_hash, anim=True, size=1024)
+    if not banner_url and u_dcdn.get('banner_color'):
+        # Fallback to solid color logic handled by client
+        banner_url = None
+
+    # Avatar Decoration (Frame)
+    deco_hash = u_dcdn.get('avatar_decoration')
+    deco_url = f"https://cdn.discordapp.com/avatar-decoration-presets/{deco_hash}.png" if deco_hash else None
+
+    # Bio
+    bio = u_dcdn.get('bio') or lanyard.get('kv', {}).get('bio')
+    
+    # Color
+    color_int = u_dcdn.get('accent_color')
+    accent_hex = f"#{color_int:06x}" if color_int else "#5865F2"
+
+    # --- 3. PLATFORM & STATUS DETECTION ---
+    status_overall = lanyard.get('discord_status', 'offline')
+    
+    # Specific Platform status (e.g. { "mobile": "online", "desktop": "dnd" })
+    # Lanyard provides 'active_on_discord_X'. If true, assume it shares the main status
+    platforms = {}
+    if lanyard.get('active_on_discord_desktop'): platforms['desktop'] = status_overall
+    if lanyard.get('active_on_discord_mobile'): platforms['mobile'] = status_overall
+    if lanyard.get('active_on_discord_web'): platforms['web'] = status_overall
+    
+    is_mobile = bool(lanyard.get('active_on_discord_mobile'))
+
+    # --- 4. CONNECTIONS (SMART LINKING) ---
+    connections = []
+    # Combine DCDN (best for list) with manual mapping
+    for conn in dcdn.get('connected_accounts', []):
+        c_type = conn.get('type')
+        c_name = conn.get('name')
+        c_id = conn.get('id')
+        
+        # Build URL
+        c_url = "#"
+        if c_type in LINK_PATTERNS:
+            # Steam usually requires ID, others use Name
+            identifier = c_id if c_type == 'steam' else c_name
+            c_url = LINK_PATTERNS[c_type].format(identifier)
+
+        connections.append({
+            "type": c_type,
+            "name": c_name,
+            "id": c_id,
+            "url": c_url,
+            "is_verified": conn.get('verified', False),
+            "icon_url": f"{ICON_BASE}/{c_type.replace('.','dot')}.svg"
+        })
+
+    # --- 5. ACTIVITY SCANNER (Rich) ---
+    activities_parsed = []
+    
+    # A. Spotify Object
+    if lanyard.get('spotify'):
+        s = lanyard['spotify']
+        timers = get_calc_time(s['timestamps']['start'], s['timestamps']['end'])
+        activities_parsed.append({
+            "type": "spotify",
+            "name": "Spotify",
+            "state": s['artist'],
+            "details": s['song'],
+            "album": s['album'],
+            "assets": {
+                "large_image": s['album_art_url'],
+                "large_text": s['album']
+            },
+            "timers": timers,
+            "is_listening": True
+        })
+
+    # B. Game / Apps
+    for act in lanyard.get('activities', []):
+        if act['id'] == 'spotify:1': continue # Duplicate skip
+        
+        # Custom Status (Type 4)
+        if act['type'] == 4:
+            # We add it, but frontends usually treat it separately
+            emoji = None
+            if act.get('emoji'):
+                emoji_url = f"https://cdn.discordapp.com/emojis/{act['emoji']['id']}.png" if act['emoji'].get('id') else None
+                emoji = {"name": act['emoji'].get('name'), "url": emoji_url}
+            
+            activities_parsed.append({
+                "type": "custom",
+                "state": act.get('state'),
+                "emoji": emoji,
+                "name": "Custom Status"
+            })
+            continue
+
+        # Regular Rich Presence
+        t_meta = None
+        if 'timestamps' in act:
+            t_meta = get_calc_time(act['timestamps'].get('start'), act['timestamps'].get('end'))
+
+        # Party Info
+        party_info = None
+        if 'party' in act and 'size' in act['party']:
+            # [current, max]
+            p_cur, p_max = act['party']['size']
+            party_info = f"{p_cur}/{p_max}"
+
+        activities_parsed.append({
+            "type": "game",
+            "name": act.get('name'),
+            "details": act.get('details'),
+            "state": act.get('state'),
+            "assets": {
+                "large_image": resolve_rp_img(act['application_id'], act.get('assets',{}).get('large_image')),
+                "large_text": act.get('assets',{}).get('large_text'),
+                "small_image": resolve_rp_img(act['application_id'], act.get('assets',{}).get('small_image')),
+            },
+            "timestamps": t_meta,
+            "party": party_info,
+            "is_listening": act['type'] == 2 or act['type'] == 0
+        })
+
+    # --- 6. BADGES ---
+    badges_formatted = []
+    for b in dcdn.get('badges', []):
+        badges_formatted.append({
+            "id": b.get('id'),
+            "description": b.get('description'),
+            "icon_url": f"https://cdn.discordapp.com/badge-icons/{b['icon']}.png"
+        })
+
+    # === PAYLOAD ===
     payload = {
         "success": True,
-        "timestamp_generated": start_time,
-        "user_info": {
-            "id": user_id,
+        "ts": time.time(),
+        "user": {
+            "id": uid,
             "username": username,
-            "display_name": display_name,
-            "created_at": created_at,
+            "global_name": display_name,
+            "discriminator": discriminator,
             "avatar_url": avatar_url,
+            "avatar_decoration": deco_url,
             "banner_url": banner_url,
+            "accent_color": accent_hex,
+            "bio": bio
         },
-        "profile": {
-            "bio": d_user.get('bio', dcdn_data.get('bio')), # Double check locations
-            "accent_color_hex": accent_hex,
-            "badges": badges,
-            "connections": connections
+        "presence": {
+            "status": status_overall,
+            "platform_status": platforms,
+            "is_mobile_web": is_mobile
         },
-        "status": {
-            "status": discord_status,
-            "active_on": active_platforms,
-            "custom_status": custom_status,
-            "kv": lanyard_data.get('kv', {})
-        },
-        "data": {
-            "spotify": current_spotify,
-            "activities": processed_activities
-        }
+        "connections": connections,
+        "badges": badges_formatted,
+        "activities": activities_parsed
     }
     
-    # Cache
-    CACHE[user_id] = {'ts': start_time, 'payload': payload}
+    CACHE[uid] = {'time': now_ts, 'data': payload}
     return jsonify(payload)
 
 @app.route('/')
-def doc():
-    return render_template_string("<html><body><h1>Titan API God Mode</h1><p>/api/godmode/&lt;user_id&gt;</p></body></html>")
+def home():
+    return jsonify({"status": "Titan API v63 Online", "endpoint": "/api/data/<user_id>"})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
