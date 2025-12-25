@@ -1,31 +1,29 @@
 import os
 import time
-import math
 import requests
 import datetime
-import re
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app) # Enables usage from any website/obs
+CORS(app)
 
 # =======================
-#    SYSTEM CONFIG
+#    CONFIGURATION
 # =======================
-HEADERS = {'User-Agent': 'Titan-API/v60-DataCore'}
+HEADERS = {'User-Agent': 'Titan-API/v63-Stable'}
 CACHE = {}
-CACHE_TTL = 5 # Aggressive caching for 5 seconds
+CACHE_TTL = 15
 
-# Knowledge Base for Connections
-CONN_URLS = {
+# DEFINED: Link Templates (Fixed NameError)
+LINK_TEMPLATES = {
     "github": "https://github.com/{}", 
     "twitter": "https://x.com/{}", "x": "https://x.com/{}",
     "reddit": "https://reddit.com/user/{}", 
-    "steam": "https://steamcommunity.com/profiles/{}", # Accepts ID
     "twitch": "https://twitch.tv/{}", 
-    "youtube": "https://youtube.com/@{}", 
+    "youtube": "https://youtube.com/channel/{}", 
     "spotify": "https://open.spotify.com/user/{}",
+    "steam": "https://steamcommunity.com/profiles/{}", # Usually ID
     "tiktok": "https://tiktok.com/@{}",
     "instagram": "https://instagram.com/{}",
     "facebook": "https://facebook.com/{}",
@@ -37,263 +35,206 @@ CONN_URLS = {
 ICON_BASE = "https://cdn.jsdelivr.net/npm/simple-icons@v11/icons"
 
 # =======================
-#    COMPUTE ENGINE
+#    LOGIC ENGINE
 # =======================
 
 def solve_snowflake(sf):
-    """Bitwise calculation to extract account creation date from Discord ID"""
+    """Calculate Account Age from ID"""
     try:
-        sf_int = int(sf)
-        # Discord Epoch: 1420070400000
-        ms = (sf_int >> 22) + 1420070400000
-        dt = datetime.datetime.fromtimestamp(ms / 1000, datetime.timezone.utc)
-        
+        sf = int(sf)
+        timestamp = ((sf >> 22) + 1420070400000) / 1000
+        dt = datetime.datetime.fromtimestamp(timestamp, datetime.timezone.utc)
         now = datetime.datetime.now(datetime.timezone.utc)
         diff = now - dt
-        years = diff.days // 365
-        
         return {
-            "unix_ms": ms,
             "iso": dt.isoformat(),
-            "friendly": dt.strftime("%B %d, %Y"),
-            "account_age_days": diff.days,
-            "account_age_years": f"{years:.1f}"
+            "pretty": dt.strftime("%B %d, %Y"),
+            "unix": int(timestamp),
+            "age_years": f"{diff.days / 365:.1f}"
         }
-    except:
-        return None
+    except: return None
 
 def calc_contrast(hex_code):
-    """Calculates perceptive luminance to recommend text color (black vs white)"""
-    if not hex_code or not hex_code.startswith('#'): return "light"
+    """Determine text color (black/white) based on background hex"""
+    if not hex_code or not str(hex_code).startswith('#'): return "light"
     try:
         h = hex_code.lstrip('#')
         rgb = tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
-        # Standard Rec. 709 Luminance
-        lum = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255
+        lum = (0.299*rgb[0] + 0.587*rgb[1] + 0.114*rgb[2]) / 255
         return "black" if lum > 0.5 else "white"
     except: return "white"
 
-def parse_time_window(start, end):
-    """Complex Time Delta Math for Progress Bars"""
+def parse_timestamps(start, end):
+    """Progress Bar Math"""
     now = time.time() * 1000
+    obj = {"start": start, "end": end}
     
-    obj = {
-        "start": start, "end": end,
-        "is_active": True
-    }
-
-    # Elapsed
     if start:
-        el_ms = now - start
-        s = int(el_ms / 1000)
+        el = now - start
+        s = int(el / 1000)
         m, s = divmod(s, 60)
         h, m = divmod(m, 60)
-        obj['elapsed_ms'] = el_ms
-        obj['elapsed_human'] = f"{m}:{s:02d}" if h==0 else f"{h}:{m:02d}:{s:02d}"
-    
-    # Progress & Remaining
-    if start and end:
-        total = end - start
-        if total > 0:
-            pct = (el_ms / total) * 100
-            obj['progress'] = min(max(pct, 0), 100)
-            
-            rem_ms = end - now
-            rs = int(rem_ms / 1000)
-            rm, rs = divmod(rs, 60)
-            obj['remaining_human'] = f"-{rm}:{rs:02d}"
-            obj['duration_human'] = f"{int(total/1000//60)}:{int(total/1000%60):02d}"
-
+        obj['elapsed'] = f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+        
+        if end:
+            tot = end - start
+            if tot > 0:
+                pct = min(max((el / tot) * 100, 0), 100)
+                obj['percent'] = round(pct, 2)
+                
+                rem = end - now
+                rs = int(abs(rem) / 1000)
+                rm, rs = divmod(rs, 60)
+                obj['remaining'] = f"-{rm}:{rs:02d}"
     return obj
 
-def resolve_asset(app_id, hash_val):
-    if not hash_val: return None
-    # External Proxy handling
-    if hash_val.startswith("mp:"): 
-        return f"https://media.discordapp.net/{hash_val.replace('mp:','')}"
-    # Spotify handling
-    if hash_val.startswith("spotify:"):
-        return f"https://i.scdn.co/image/{hash_val.replace('spotify:','')}"
-    # Standard Asset
-    return f"https://cdn.discordapp.com/app-assets/{app_id}/{hash_val}.png"
-
 # =======================
-#    DATA AGGREGATOR
+#    MAIN API ROUTE
 # =======================
 
 @app.route('/api/data/<uid>')
 def fetch_user_data(uid):
     start_bench = time.perf_counter()
     
-    # 1. Cache Layer
+    # 1. CACHE CHECK
     if uid in CACHE:
         if time.time() - CACHE[uid]['ts'] < CACHE_TTL:
             return jsonify(CACHE[uid]['data'])
 
-    # 2. Source Harvesting (Parallel-simulated)
-    # LANYARD (Live)
-    lanyard = {}
-    try:
-        r_l = requests.get(f"https://api.lanyard.rest/v1/users/{uid}", headers=HEADERS, timeout=4)
-        if r_l.status_code == 200: lanyard = r_l.json().get('data', {})
-    except: pass
-    
-    # DCDN (Profile Meta)
+    # 2. FETCHING
     dcdn = {}
-    dcdn_meta = {}
+    lanyard = {}
+    
     try:
-        r_d = requests.get(f"https://dcdn.dstn.to/profile/{uid}", headers=HEADERS, timeout=4)
-        if r_d.status_code == 200:
-            json_d = r_d.json()
-            dcdn = json_d.get('user', {})
-            dcdn_meta = json_d # root for badges/conns
+        r = requests.get(f"https://dcdn.dstn.to/profile/{uid}", headers=HEADERS, timeout=4)
+        if r.status_code == 200: dcdn = r.json()
     except: pass
     
-    if not lanyard and not dcdn:
-        return jsonify({"success": False, "error": "User not found via Lanyard or DCDN"}), 404
+    try:
+        r = requests.get(f"https://api.lanyard.rest/v1/users/{uid}", headers=HEADERS, timeout=4)
+        if r.status_code == 200: 
+            dat = r.json()
+            if dat.get('success'): lanyard = dat['data']
+    except: pass
 
-    # 3. Intelligent Parsing
+    # If absolutely nothing found
+    if not lanyard and not dcdn:
+        return jsonify({"success": False, "error": "User Not Found"}), 404
+
+    # 3. PROCESSING
     l_u = lanyard.get('discord_user', {})
+    d_u = dcdn.get('user', {})
     
-    # Identity Logic (DCDN takes precedence for assets)
-    username = dcdn.get('username') or l_u.get('username')
-    global_name = dcdn.get('global_name') or l_u.get('global_name') or username
+    # Identity
+    user_id = str(uid)
+    username = l_u.get('username') or d_u.get('username') or "Unknown"
+    global_name = l_u.get('global_name') or d_u.get('global_name') or username
     
-    # Advanced Asset Resolution (Avatars, Banners, Decorations)
-    av_hash = dcdn.get('avatar') or l_u.get('avatar')
-    av_ext = "gif" if av_hash and av_hash.startswith("a_") else "png"
-    av_url = f"https://cdn.discordapp.com/avatars/{uid}/{av_hash}.{av_ext}?size=1024" if av_hash else None
+    # Avatar/Banner
+    av = l_u.get('avatar') or d_u.get('avatar')
+    bn = d_u.get('banner') # DCDN preferred for banner
+    av_url = f"https://cdn.discordapp.com/avatars/{uid}/{av}.png" if av else "https://cdn.discordapp.com/embed/avatars/0.png"
+    bn_url = f"https://cdn.discordapp.com/banners/{uid}/{bn}.png?size=1024" if bn else None
     
-    bn_hash = dcdn.get('banner') 
-    bn_url = f"https://cdn.discordapp.com/banners/{uid}/{bn_hash}.{ 'gif' if bn_hash and bn_hash.startswith('a_') else 'png' }?size=2048" if bn_hash else None
+    # Color
+    color = d_u.get('accent_color')
+    hex_col = f"#{color:06x}" if color else "#5865F2"
     
-    # Profile Color Math
-    acc_color = dcdn.get('accent_color')
-    acc_hex = f"#{acc_color:06x}" if acc_color else "#5865F2" # default blurple
-    text_color_suggest = calc_contrast(acc_hex)
-    
-    # Account Age Calculation
-    age_meta = solve_snowflake(uid)
-    
-    # Presence & Platforms
-    status = lanyard.get('discord_status', 'offline')
-    platforms = [k for k in ['desktop','mobile','web'] if lanyard.get(f'active_on_discord_{k}')]
-    
-    # Connection Normalization
+    # Connections (Fixed logic here)
     connections = []
-    for c in dcdn_meta.get('connected_accounts', []):
-        t = c['type']
-        url = LINK_TEMPLATES.get(t, "#").format(c['id'] if t=='steam' else c['name'])
+    # Loop over DCDN 'connected_accounts' list
+    raw_conns = dcdn.get('connected_accounts', []) 
+    for c in raw_conns:
+        t = c.get('type')
+        n = c.get('name')
+        i = c.get('id')
+        
+        # Link Builder
+        link = "#"
+        if t in LINK_TEMPLATES:
+            # Some platforms like steam use ID in url, others use Name
+            arg = i if t == 'steam' else n
+            link = LINK_TEMPLATES[t].format(arg)
+            
         connections.append({
             "type": t,
-            "name": c['name'],
-            "verified": c.get('verified', False),
-            "url": url,
-            "icon_svg_url": f"{ICON_BASE}/{t.replace('.','dot')}.svg"
+            "name": n,
+            "url": link,
+            "icon": f"{ICON_BASE}/{t.replace('.','dot')}.svg"
         })
 
-    # Badge Normalization
-    badges = []
-    for b in dcdn_meta.get('badges', []):
-        badges.append({
-            "id": b['id'],
-            "description": b.get('description'),
-            "icon": f"https://cdn.discordapp.com/badge-icons/{b['icon']}.png"
-        })
-
-    # Deep Activity Analysis
-    activities = []
+    # Activity Processing
+    acts = []
     
-    # A. Spotify Processing
-    if lanyard.get('spotify'):
-        s = lanyard['spotify']
-        timers = parse_time_window(s['timestamps']['start'], s['timestamps']['end'])
-        activities.append({
+    # Spotify
+    spot = lanyard.get('spotify')
+    if spot:
+        acts.append({
             "type": "spotify",
             "name": "Spotify",
-            "header": "LISTENING TO",
-            "title": s['song'],
-            "state": s['artist'],
-            "details": s['album'],
-            "assets": { "large_image": s['album_art_url'] },
-            "timestamps": timers
+            "line1": spot['song'],
+            "line2": spot['artist'],
+            "line3": spot['album'],
+            "image": spot['album_art_url'],
+            "timestamps": parse_time_window(spot['timestamps']['start'], spot['timestamps']['end'])
         })
-
-    # B. RPC Processing
-    for act in lanyard.get('activities', []):
-        if act['type'] == 4: continue # custom status skip
-        if act['id'] == 'spotify:1': continue # skip dup spotify
-
-        ts = act.get('timestamps', {})
-        timers = parse_time_window(ts.get('start'), ts.get('end'))
         
-        # Verb Determination
-        verbs = {0: "PLAYING", 1: "STREAMING", 2: "LISTENING TO", 3: "WATCHING", 5: "COMPETING IN"}
+    # Games
+    for a in lanyard.get('activities', []):
+        if a['type'] == 4: continue # skip status
+        if a['id'] == 'spotify:1': continue 
         
-        assets = act.get('assets', {})
-        app_id = act.get('application_id')
-        
-        activities.append({
+        # Image Resolve
+        img = None
+        if a.get('assets') and a['assets'].get('large_image'):
+            raw = a['assets']['large_image']
+            app_id = a['application_id']
+            if raw.startswith("mp:"): img = f"https://media.discordapp.net/{raw[3:]}"
+            else: img = f"https://cdn.discordapp.com/app-assets/{app_id}/{raw}.png"
+            
+        acts.append({
             "type": "game",
-            "app_id": app_id,
-            "name": act['name'],
-            "header": verbs.get(act['type'], "ACTIVITY"),
-            "title": act.get('details', act['name']),
-            "state": act.get('state'),
-            "details": act.get('details'),
-            "assets": {
-                "large_image": resolve_asset(app_id, assets.get('large_image')),
-                "large_text": assets.get('large_text'),
-                "small_image": resolve_asset(app_id, assets.get('small_image')),
-            },
-            "timestamps": timers,
-            "is_rich_presence": True
+            "name": a['name'],
+            "line1": a.get('details', a['name']),
+            "line2": a.get('state', ''),
+            "image": img,
+            "timestamps": parse_time_window(a.get('timestamps', {}).get('start'), a.get('timestamps', {}).get('end'))
         })
-        
-    # C. Custom Status
-    custom = next((a for a in lanyard.get('activities', []) if a['type'] == 4), None)
-    status_text = custom.get('state') if custom else None
-    
-    # 4. Final Payload Assembly
-    response = {
-        "meta": {
-            "success": True,
-            "server_time": time.time(),
-            "execution_ms": round((time.perf_counter() - start_bench) * 1000, 2)
-        },
+
+    # Final Payload
+    payload = {
+        "success": True,
+        "ts": time.time(),
         "user": {
-            "id": uid,
+            "id": user_id,
             "username": username,
-            "global_name": display_name,
-            "bio": d_user.get('bio') or lanyard.get('kv', {}).get('bio'),
-            "created_at": age_meta
-        },
-        "assets": {
+            "display": global_name,
             "avatar": av_url,
             "banner": bn_url,
-            "accent_color": acc_hex,
-            "ui_theme": text_color_suggest
-        },
-        "presence": {
-            "status": status,
-            "active_platforms": platforms,
-            "custom_status": status_text
+            "bio": d_user.get('bio') or lanyard.get('kv', {}).get('bio'),
+            "age": solve_snowflake(uid),
+            "theme": {
+                "color": hex_col,
+                "text": calc_contrast(hex_col)
+            }
         },
         "connections": connections,
-        "badges": badges,
-        "activities": activities
+        "presence": {
+            "status": lanyard.get('discord_status', 'offline'),
+            "platforms": [k for k in ['desktop','mobile','web'] if lanyard.get(f'active_on_discord_{k}')],
+        },
+        "activities": acts
     }
     
-    CACHE[uid] = {'ts': time.time(), 'data': response}
-    return jsonify(response)
+    CACHE[uid] = {'ts': time.time(), 'data': payload}
+    return jsonify(payload)
 
 @app.route('/')
 def home():
     return jsonify({
-        "system": "Titan Data Aggregator v60",
         "status": "Online",
-        "endpoints": ["/api/data/<user_id>"],
-        "info": "This API processes Discord, Lanyard, and DCDN data into a unified schema."
+        "system": "Titan Data Aggregator v63",
+        "endpoints": ["/api/data/<user_id>"]
     })
 
 if __name__ == '__main__':
