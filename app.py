@@ -11,13 +11,12 @@ app = Flask(__name__)
 # ===========================
 #        CONFIGURATION
 # ===========================
-HEADERS = {'User-Agent': 'HyperBadge/Titan-v50-PlatFix'}
+HEADERS = {'User-Agent': 'HyperBadge/Titan-v50-Polished'}
 EMPTY = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
 
 CACHE = {} 
 ICON_CACHE = {}
 
-# Mappings
 CONN_MAP = {
     "github": "github", "steam": "steam", "twitch": "twitch", "spotify": "spotify",
     "twitter": "x", "reddit": "reddit", "youtube": "youtube", "xbox": "xbox", 
@@ -31,7 +30,7 @@ CONN_URLS = {
 }
 SIMPLE_ICONS_BASE = "https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/"
 
-# Platform Paths (SVG) - For Static Badge
+# Platform Icons (SVG)
 PLAT_ICONS = {
     "mobile": "M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z",
     "desktop": "M21 2H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h7v2H8v2h8v-2h-2v-2h7c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H3V4h18v12z",
@@ -50,18 +49,15 @@ def sanitize_xml(text):
     return html.escape(text, quote=True)
 
 def get_base64(url, is_svg=False):
-    """Caching Image Fetcher"""
+    """Downloads image -> Base64 (Cached)"""
     if not url: return EMPTY
     if url in ICON_CACHE: return ICON_CACHE[url]
-    
     try:
         if url.startswith("mp:"): url = f"https://media.discordapp.net/{url[3:]}"
-        
         r = requests.get(url, headers=HEADERS, timeout=4)
         if r.status_code == 200:
             mime = "image/svg+xml" if (is_svg or url.endswith(".svg")) else "image/png"
             val = f"data:{mime};base64,{base64.b64encode(r.content).decode('utf-8')}"
-            # Cache Management
             if len(ICON_CACHE) > 200: ICON_CACHE.clear()
             ICON_CACHE[url] = val
             return val
@@ -69,22 +65,19 @@ def get_base64(url, is_svg=False):
     return EMPTY
 
 def get_css(bg_anim, fg_anim):
-    # Font Import
     css = "@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@800&amp;family=Outfit:wght@400;500;800;900&amp;family=Pacifico&amp;family=Poppins:wght@400;500;600&amp;display=swap');"
-    # Animations
     keyframes = """
     @keyframes d { from{transform:scale(1.02) rotate(0deg)} to{transform:scale(1.05) rotate(0.5deg)} }
     @keyframes slide { 0%{transform:translateX(-15px);opacity:0} 100%{transform:translateX(0);opacity:1} }
     @keyframes pop { 0%{transform:scale(0); opacity:0} 100%{transform:scale(1); opacity:1} }
     @keyframes glint { 0% {transform:translateX(-200%)} 100% {transform:translateX(200%)} }
     @keyframes pulse { 0%{opacity:0.6} 50%{opacity:1} 100%{opacity:0.6} }
-    @keyframes bar { 0%{height:4px} 50%{height:14px} 100%{height:4px} }
-    @keyframes b { 0%{r:12px} 50%{r:16px} 100%{r:12px} }
+    @keyframes breathe { 0%{r:12px} 50%{r:16px} 100%{r:12px} }
+    @keyframes eq { 0%{height:4px} 50%{height:14px} 100%{height:4px} }
     """
-    
     classes = ""
     if str(bg_anim).lower() != 'false': classes += ".bg-drift{animation:d 40s linear infinite alternate} .pulsing{animation:pulse 3s infinite} .shiny{animation:glint 6s infinite cubic-bezier(0.4, 0, 0.2, 1)}"
-    if str(fg_anim).lower() != 'false': classes += ".slide-in{animation:slide 0.8s ease-out} .badge-pop{animation:pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) backwards} .status-breathe{animation:b 3s infinite} .eq-bar{animation:bar 0.8s ease-in-out infinite}"
+    if str(fg_anim).lower() != 'false': classes += ".slide-in{animation:slide 0.8s ease-out} .badge-pop{animation:pop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) backwards} .status-breathe{animation:breathe 3s infinite} .eq-bar{animation:eq 0.8s ease-in-out infinite}"
     return css + keyframes + classes
 
 # ===========================
@@ -109,35 +102,34 @@ def fetch_data(key, type_mode, args, for_html=False):
 
         # 2. USER MODE
         else:
+            # Init Containers
             dcdn_user, badges_list, conn_list, banner_url = {}, [], [], None
             
             # A. Fetch Profile (DCDN)
             try:
-                r_prof = requests.get(f"https://dcdn.dstn.to/profile/{key}", headers=HEADERS, timeout=3)
+                r_prof = requests.get(f"https://dcdn.dstn.to/profile/{key}", headers=HEADERS, timeout=2)
                 if r_prof.status_code == 200:
                     prof_json = r_prof.json()
-                    dcdn_user = prof_json.get('user', {})
-                    banner_url = dcdn_user.get('banner')
-                    # Badges
-                    for b in prof_json.get('badges', []):
-                        u = f"https://cdn.discordapp.com/badge-icons/{b['icon']}.png"
-                        badges_list.append(u if for_html else get_base64(u))
-                    
-                    # Connections
-                    seen = set()
-                    for c in prof_json.get('connected_accounts', []):
-                        ctype = c['type']
-                        if ctype in CONN_MAP and ctype not in seen:
-                            c_url = f"{SIMPLE_ICONS_BASE}{CONN_MAP[ctype]}.svg"
-                            val = c_url if for_html else get_base64(c_url, is_svg=True)
-                            
-                            link_t = "#"
-                            if ctype in CONN_URLS: 
-                                identifier = c['id'] if ctype=='steam' else c['name']
-                                link_t = CONN_URLS[ctype].format(identifier)
-                            
-                            conn_list.append({'type': ctype, 'src': val, 'link': link_t})
-                            seen.add(ctype)
+                    if 'user' in prof_json:
+                        dcdn_user = prof_json['user']
+                        banner_url = dcdn_user.get('banner')
+                        # Badges
+                        for b in prof_json.get('badges', []):
+                            u = f"https://cdn.discordapp.com/badge-icons/{b['icon']}.png"
+                            badges_list.append(u if for_html else get_base64(u))
+                        
+                        # Connections
+                        seen = set()
+                        for c in prof_json.get('connected_accounts', []):
+                            if c['type'] in CONN_MAP and c['type'] not in seen:
+                                url = f"{SIMPLE_ICONS_BASE}{CONN_MAP[c['type']]}.svg"
+                                val = url if for_html else get_base64(url, is_svg=True)
+                                link = "#"
+                                if c['type'] in CONN_URLS: 
+                                    ident = c['id'] if c['type']=='steam' else c['name']
+                                    link = CONN_URLS[c['type']].format(ident)
+                                conn_list.append({'type': c['type'], 'src': val, 'link': link})
+                                seen.add(c['type'])
             except: pass
 
             # B. Fetch Presence (Lanyard)
@@ -149,13 +141,11 @@ def fetch_data(key, type_mode, args, for_html=False):
             u = d['discord_user']
             status = d['discord_status']
             
-            # Platform Detect
             platforms = []
             if d.get('active_on_discord_desktop'): platforms.append("desktop")
             if d.get('active_on_discord_mobile'): platforms.append("mobile")
             if d.get('active_on_discord_web'): platforms.append("web")
 
-            # Logic
             cols = {"online": "#00FF99", "idle": "#FFBB00", "dnd": "#ed4245", "offline": "#80848e", "spotify": "#1DB954"}
             main_act = None
 
@@ -179,21 +169,20 @@ def fetch_data(key, type_mode, args, for_html=False):
                     
                     header = "PLAYING" if act['type'] == 0 else "WATCHING"
                     main_act = {
-                        "header": f"{header} {act['name'].upper()}",
-                        "title": act.get('details', act['name']),
-                        "detail": act.get('state', ''),
-                        "image": img_url,
+                        "header": f"{header} {act['name'].upper()}", "title": act.get('details', act['name']),
+                        "detail": act.get('state', ''), "image": img_url,
                         "color": cols.get(status, "#5865F2"),
                         "start": act.get('timestamps', {}).get('start', 0), "end": act.get('timestamps', {}).get('end', 0),
                         "is_music": False
                     }
                     break
             
-            # 3. Fallback
+            # 3. Idle / Custom
             if not main_act:
                 msg = args.get('idleMessage', 'Chilling')
                 for act in d.get('activities', []):
                     if act['type'] == 4: msg = act.get('state', msg); break
+                
                 main_act = {
                     "header": "CURRENT STATUS", "title": msg, "detail": "Online" if status!='offline' else "Offline",
                     "image": None, "color": cols.get(status, "#555"), "is_music": False, "start":0, "end":0
@@ -203,6 +192,7 @@ def fetch_data(key, type_mode, args, for_html=False):
             u_avatar = f"https://cdn.discordapp.com/avatars/{u['id']}/{u['avatar']}.png"
             final_bg = banner_url if banner_url else u_avatar
             
+            # Format Output
             if for_html:
                 return {
                     "name": final_name, "uid": u['id'], "avatar": u_avatar, "banner": final_bg,
@@ -211,6 +201,14 @@ def fetch_data(key, type_mode, args, for_html=False):
                     "platforms": platforms, "activity": main_act
                 }
             else:
+                progress = 0
+                if main_act['is_music']:
+                    try:
+                        now = time.time()*1000
+                        p = min(max(((now - main_act['start']) / (main_act['end'] - main_act['start']))*100, 0), 100)
+                        progress = p
+                    except: pass
+
                 return {
                     "type": "user",
                     "name": sanitize_xml(final_name),
@@ -223,21 +221,31 @@ def fetch_data(key, type_mode, args, for_html=False):
                     "banner_image": get_base64(final_bg),
                     "act_image": get_base64(main_act['image']) if main_act['image'] else None,
                     "bio": sanitize_xml(dcdn_user.get('bio','')),
-                    "badges": badges_list, 
-                    "connections": [c['src'] for c in conn_list], 
-                    "platforms": platforms, "sub_id": u['id'], "is_music": main_act['is_music']
+                    "badges": badges_list, "connections": [c['src'] for c in conn_list], 
+                    "platforms": platforms, "sub_id": u['id'],
+                    "is_music": main_act['is_music'], "progress": progress
                 }
-
     except: return None
 
 # ===========================
-#      RENDER ENGINES (SVG)
+#      RENDER ENGINES
 # ===========================
 
-def render_svg(d, css, radius, bg_col):
-    """SVG Static Fallback"""
+def render_mega_svg(d, css, radius, bg_col):
+    """SVG Engine (Static Backup)"""
     bg_svg = f"""<rect width="100%" height="100%" fill="#{bg_col}" /><image href="{d['banner_image']}" width="100%" height="150%" y="-15%" preserveAspectRatio="xMidYMid slice" opacity="0.4" filter="url(#heavyBlur)" class="bg-drift"/><rect width="100%" height="100%" fill="url(#vig)"/>"""
     
+    # Progress Bar Geometry
+    prog_svg = ""
+    if d['is_music'] and d['progress'] > 0:
+         w = (d['progress'] / 100.0) * 840 # total dock width is 840
+         # Inserted directly below, docked to bottom-left inside group
+         prog_svg = f"""
+         <path d="M 0 106 H {w} V 110 H 2 A 18 18 0 0 1 0 92 V 106 Z" fill="{d['color']}" opacity="0.8"/>
+         <!-- Fallback straight bar since SVG paths can be complex with dynamic width, using simple rect clipped -->
+         <rect x="0" y="106" width="{w}" height="4" fill="{d['color']}" />
+         """
+
     if d['act_image']:
         act_viz = f"""<image href="{d['act_image']}" x="25" y="195" width="80" height="80" rx="14" /><rect x="25" y="195" width="80" height="80" rx="14" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>"""
         txt_pos = 135
@@ -250,197 +258,161 @@ def render_svg(d, css, radius, bg_col):
     badge_group = "".join([f'<image href="{b}" x="{i*28}" y="0" width="22" height="22" class="badge-pop" style="animation-delay:{i*0.05}s"/>' for i,b in enumerate(d.get('badges', []))])
     conn_group = "".join([f'<image href="{c}" x="{i*34}" y="0" width="22" height="22" filter="url(#invert)" opacity="0.7"/>' for i,c in enumerate(d.get('connections', [])[:6])])
 
-    # SVG Platform Icons
     plat_svg = ""
     px = 840
     for p in d.get('platforms', []):
         if p in PLAT_ICONS:
-            plat_svg += f'<path transform="translate({px},0)" d="{PLAT_ICONS[p]}" fill="{d["status_color"]}" opacity="0.9" />'
+            plat_svg += f'<path transform="translate({px},0)" d="{PLAT_ICONS[p]}" fill="{d["status_color"]}" opacity="0.8"/>'
             px -= 26
     plat_group = f'<g transform="translate(0, 30)">{plat_svg}</g>'
+    
     t_tit = d['title'][:32] + (".." if len(d['title'])>32 else "")
 
-    return f"""<svg width="880" height="320" viewBox="0 0 880 320" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><defs><style>{css}.title{{font-family:'Pacifico',cursive;fill:white;text-shadow:0 4px 10px rgba(0,0,0,0.5);}}.head{{font-family:'Outfit',sans-serif;font-weight:800;text-transform:uppercase;}}.sub{{font-family:'Poppins',sans-serif;opacity:0.9;}}.mono{{font-family:'JetBrains Mono',monospace;opacity:0.6;}}</style><clipPath id="cp"><rect width="880" height="320" rx="{radius}"/></clipPath><clipPath id="avc"><circle cx="75" cy="75" r="75"/></clipPath><filter id="heavyBlur"><feGaussianBlur stdDeviation="60"/></filter><filter id="ds"><feDropShadow dx="0" dy="4" stdDeviation="4" flood-opacity="0.6"/></filter><filter id="invert"><feColorMatrix type="matrix" values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 1 0"/></filter><linearGradient id="vig" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="rgba(0,0,0,0.3)"/><stop offset="1" stop-color="#000" stop-opacity="0.95"/></linearGradient><linearGradient id="shine" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="white" stop-opacity="0.04"/><stop offset="1" stop-color="white" stop-opacity="0"/></linearGradient></defs><g clip-path="url(#cp)">{bg_svg}<rect x="-400" width="200" height="320" fill="white" opacity="0.03" transform="skewX(-20)" class="shiny"/><rect width="876" height="316" x="2" y="2" rx="{radius}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="2"/></g><g transform="translate(40,40)"><circle cx="75" cy="75" r="79" fill="#18181c"/><circle cx="75" cy="75" r="76" fill="none" stroke="{d['color']}" stroke-width="4" stroke-dasharray="16 10" class="pulsing"/><g clip-path="url(#avc)"><image href="{d['avatar']}" width="150" height="150" /></g><circle cx="125" cy="125" r="18" fill="#121212"/><circle cx="125" cy="125" r="13" fill="{d['status_color']}" class="status-breathe"/><g transform="translate(180, 20)"><g transform="translate(0, -15)">{badge_group}</g><text x="0" y="55" class="title" font-size="60">{d['name']}</text><text x="10" y="80" class="mono" font-size="12">ID :: {d['sub_id']}</text><foreignObject x="5" y="90" width="550" height="60"><div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Poppins';font-size:16px;color:#ddd;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:0.9;">{d['bio']}</div></foreignObject></g></g>{plat_group}<g transform="translate(20, 195)" class="slide-in"><rect width="840" height="110" rx="20" fill="rgba(30,30,35,0.6)" stroke="{d['color']}" stroke-opacity="0.3" stroke-width="2"/>{act_viz}<g transform="translate({txt_pos}, 28)"><g><text x="0" y="0" class="mono" font-size="11" fill="{d['color']}" letter-spacing="1.5" font-weight="bold">{d['app_name']}</text>{eq_viz}</g><text x="0" y="32" class="head" font-size="28" fill="white" filter="url(#ds)">{t_tit}</text><text x="0" y="56" class="sub" font-size="16" fill="#BBB">{d['detail'][:60]}</text></g><g transform="translate(630, 45)">{conn_group}</g></g></svg>"""
+    return f"""<svg width="880" height="320" viewBox="0 0 880 320" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+      <defs><style>{css} .title{{font-family:'Pacifico',cursive;fill:white;text-shadow:0 4px 10px rgba(0,0,0,0.5);}} .head{{font-family:'Outfit',sans-serif;font-weight:800;text-transform:uppercase;}} .sub{{font-family:'Poppins',sans-serif;opacity:0.9;}} .mono{{font-family:'JetBrains Mono',monospace;opacity:0.6;}}</style>
+        <clipPath id="cp"><rect width="880" height="320" rx="{radius}"/></clipPath><clipPath id="avc"><circle cx="75" cy="75" r="75"/></clipPath>
+        <clipPath id="dockCP"><rect width="840" height="110" rx="20"/></clipPath>
+        <filter id="heavyBlur"><feGaussianBlur stdDeviation="60"/></filter><filter id="ds"><feDropShadow dx="0" dy="4" stdDeviation="4" flood-opacity="0.6"/></filter><filter id="invert"><feColorMatrix type="matrix" values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 1 0"/></filter>
+        <linearGradient id="vig" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="rgba(0,0,0,0.3)"/><stop offset="1" stop-color="#000" stop-opacity="0.95"/></linearGradient>
+        <linearGradient id="shine" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="white" stop-opacity="0.04"/><stop offset="1" stop-color="white" stop-opacity="0"/></linearGradient>
+      </defs>
+      <g clip-path="url(#cp)">{bg_svg}<rect x="-400" width="200" height="320" fill="white" opacity="0.03" transform="skewX(-20)" class="shiny"/><rect width="876" height="316" x="2" y="2" rx="{radius}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="2"/></g>
+      <g transform="translate(40,40)">
+         <circle cx="75" cy="75" r="79" fill="#18181c"/><circle cx="75" cy="75" r="76" fill="none" stroke="{d['color']}" stroke-width="4" stroke-dasharray="16 10" class="pulsing"/><g clip-path="url(#avc)"><image href="{d['avatar']}" width="150" height="150" /></g><circle cx="125" cy="125" r="18" fill="#121212"/><circle cx="125" cy="125" r="13" fill="{d['status_color']}" class="status-breathe"/>
+         <g transform="translate(180, 20)"><g transform="translate(0, -15)">{badge_group}</g><text x="0" y="55" class="title" font-size="60">{d['name']}</text><text x="10" y="80" class="mono" font-size="12">ID :: {d['sub_id']}</text><foreignObject x="5" y="90" width="550" height="60"><div xmlns="http://www.w3.org/1999/xhtml" style="font-family:'Poppins';font-size:16px;color:#ddd;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:0.9;">{d['bio']}</div></foreignObject></g></g>{plat_group}
+      
+      <!-- Dock -->
+      <g transform="translate(20, 195)" class="slide-in">
+          <g clip-path="url(#dockCP)">
+             <rect width="840" height="110" fill="rgba(30,30,35,0.6)"/>
+             <rect width="840" height="110" fill="url(#shine)"/>
+             {prog_svg} <!-- The Missing Progress Bar! -->
+          </g>
+          <rect width="840" height="110" rx="20" fill="none" stroke="{d['color']}" stroke-opacity="0.3" stroke-width="2"/>
+          
+          {act_viz}
+          <g transform="translate({txt_pos}, 28)">
+             <g><text x="0" y="0" class="mono" font-size="11" fill="{d['color']}" letter-spacing="1.5" font-weight="bold">{d['app_name']}</text>{eq_viz}</g>
+             <text x="0" y="32" class="head" font-size="28" fill="white" filter="url(#ds)">{t_tit}</text><text x="0" y="56" class="sub" font-size="16" fill="#BBB">{d['detail'][:60]}</text>
+          </g>
+          <g transform="translate(630, 45)">{conn_group}</g>
+      </g>
+    </svg>"""
 
 # ===========================
 #      HTML RENDERER (LIVE)
 # ===========================
 
-def render_live_html(key):
+def render_live_html(d):
+    """HTML Engine"""
     return f"""<!DOCTYPE html>
     <html lang="en">
     <head>
-        <meta charset="UTF-8"><title>Status</title>
-        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;700;900&family=Pacifico&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+        <meta charset="UTF-8"><title>{d['name']}</title>
+        <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;700;900&family=Pacifico&family=JetBrains+Mono:wght@400;500&family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
         <style>
-            :root {{ --acc: #5865F2; --stat: #555; }}
+            :root {{ --acc: {d['activity']['color']}; --stat: {d['status_color']}; }}
             * {{ margin:0; padding:0; box-sizing:border-box; }}
             body {{ background:#050508; color:white; font-family:'Outfit'; display:flex; justify-content:center; align-items:center; height:100vh; overflow:hidden; }}
-            .ambient {{ position:fixed; inset:-10%; background:black; z-index:-1; }} 
-            .ambient-img {{ position:absolute; width:100%; height:100%; object-fit:cover; filter:blur(100px) opacity(0.35); animation: d 60s infinite alternate; }}
+            .ambient {{ position:fixed; inset:-20%; background:url('{d['banner']}') center/cover; filter:blur(90px) opacity(0.3); z-index:-1; animation: d 60s infinite alternate; }}
             @keyframes d {{ from {{transform:scale(1)}} to {{transform:scale(1.2)}} }}
+            .card {{ width:960px; height:360px; background:rgba(20,20,25,0.5); border:1px solid rgba(255,255,255,0.1); border-radius:30px; backdrop-filter:blur(50px); box-shadow:0 30px 100px black; overflow:hidden; position:relative; }}
+            .header {{ position:absolute; top:40px; left:40px; display:flex; gap:35px; z-index:2; }}
+            .av-wrap {{ position:relative; width:160px; height:160px; flex-shrink:0; }}
+            .av-img {{ width:100%; height:100%; border-radius:50%; object-fit:cover; border:6px solid rgba(255,255,255,0.08); }}
+            .ring {{ position:absolute; inset:-12px; border-radius:50%; border:5px dashed var(--acc); animation:s 20s linear infinite; opacity:0.6; }}
+            @keyframes s {{ to {{ transform:rotate(360deg) }} }}
+            .s-dot {{ position:absolute; bottom:12px; right:12px; width:40px; height:40px; background:#121212; border-radius:50%; display:grid; place-items:center; }}
+            .fill {{ width:24px; height:24px; border-radius:50%; background:var(--stat); box-shadow:0 0 15px var(--stat); animation: p 2s infinite; }} @keyframes p {{ 50% {{ opacity:0.5; }} }}
             
-            .card {{ width:960px; height:420px; background:rgba(20,20,25,0.5); border:1px solid rgba(255,255,255,0.1); border-radius:40px; backdrop-filter:blur(50px); box-shadow:0 30px 100px black; position:relative; overflow:hidden; }}
-            .vignette {{ position:absolute; inset:0; background:linear-gradient(rgba(0,0,0,0.1), rgba(0,0,0,0.8)); pointer-events:none; }}
+            .meta {{ padding-top:5px; }} .badges {{ display:flex; gap:10px; margin-bottom:5px; }} .badge {{ height:30px; filter:drop-shadow(0 2px 5px black); }}
+            h1 {{ font-family:'Pacifico'; font-size:68px; line-height:1; margin:0; text-shadow:0 5px 20px rgba(0,0,0,0.5); }}
+            .uid {{ font-family:'JetBrains Mono'; font-size:12px; color:#888; letter-spacing:1px; }}
+            .bio {{ font-size:18px; color:#ddd; opacity:0.9; margin-top:15px; line-height:1.4; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }}
 
-            /* Profile Top */
-            .header {{ position:absolute; top:45px; left:50px; display:flex; gap:40px; z-index:2; }}
-            .av-wrap {{ position:relative; width:180px; height:180px; flex-shrink:0; }}
-            .av-img {{ width:100%; height:100%; border-radius:50%; object-fit:cover; border:6px solid rgba(255,255,255,0.1); }}
-            .ring {{ position:absolute; inset:-15px; border-radius:50%; border:5px dashed var(--acc); animation:spin 25s linear infinite; opacity:0.7; }}
-            @keyframes spin {{ to {{ transform:rotate(360deg); }} }}
+            .dock {{ position:absolute; bottom:25px; left:25px; width:910px; height:120px; background:rgba(30,30,35,0.75); border:1px solid rgba(255,255,255,0.1); border-radius:24px; display:flex; align-items:center; padding:20px; border-color:var(--acc); z-index:5; overflow:hidden; transition:0.3s; }}
+            /* Progress Bar Fix: Position Absolute inside Dock, relative to bottom left, 1px padding */
+            .bar-base {{ position:absolute; bottom:1px; left:1px; width:calc(100% - 2px); height:4px; background:rgba(255,255,255,0.1); border-radius: 0 0 20px 20px; overflow:hidden; }}
+            .bar-prog {{ height:100%; width:0%; background:var(--acc); transition: width 0.1s linear; box-shadow: 0 0 10px var(--acc); }}
             
-            .stat-dot {{ position:absolute; bottom:12px; right:12px; width:45px; height:45px; background:#121212; border-radius:50%; display:grid; place-items:center; }}
-            .fill {{ width:30px; height:30px; border-radius:50%; background:var(--stat); box-shadow:0 0 20px var(--stat); transition:background 0.5s; }}
+            .art {{ width:85px; height:85px; border-radius:15px; margin-right:25px; object-fit:cover; }}
+            .inf {{ flex:1; overflow:hidden; }} .lbl {{ font-family:'JetBrains Mono'; font-size:11px; color:var(--acc); font-weight:800; letter-spacing:2px; margin-bottom:4px; }}
+            .trk {{ font-size:28px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
+            .det {{ font-size:16px; color:#bbb; font-weight:500; white-space:nowrap; overflow:hidden; }}
             
-            .info {{ display:flex; flex-direction:column; padding-top:15px; min-width:0; }}
-            .badges {{ display:flex; gap:12px; margin-bottom:8px; height:32px; }} .badge {{ height:30px; filter:drop-shadow(0 3px 6px black); transition:0.2s; }} .badge:hover{{ transform:scale(1.1); }}
+            .plats {{ position:absolute; top:45px; right:45px; display:flex; gap:12px; z-index:5; }}
+            .pl svg {{ width:24px; fill:var(--stat); opacity:0.9; filter:drop-shadow(0 0 8px rgba(0,0,0,0.5)); }}
             
-            h1 {{ font-family:'Pacifico'; font-size:75px; margin:0; line-height:1; text-shadow:0 5px 20px rgba(0,0,0,0.6); }}
-            .uid {{ font-family:'JetBrains Mono'; font-size:12px; color:#888; margin-top:5px; letter-spacing:1px; }}
-            .bio {{ font-size:18px; color:#ddd; opacity:0.9; max-width:600px; margin-top:15px; line-height:1.4; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; text-overflow:ellipsis; }}
-            
-            /* Platforms Top Right */
-            .plats {{ position:absolute; top:45px; right:45px; display:flex; gap:15px; z-index:3; }}
-            .p-icon svg {{ width:28px; fill:var(--stat); filter:drop-shadow(0 0 8px rgba(0,0,0,0.6)); transition:fill 0.5s; }}
-
-            /* Activity Dock */
-            .dock {{ position:absolute; bottom:30px; left:30px; width:900px; height:130px; background:rgba(30,30,35,0.75); border:1px solid rgba(255,255,255,0.15); border-radius:28px; display:flex; align-items:center; padding:25px; transition:border-color 0.4s; border-color:var(--acc); z-index:5; box-shadow:0 10px 40px rgba(0,0,0,0.3); }}
-            
-            .art {{ width:100px; height:100px; border-radius:18px; margin-right:30px; box-shadow:0 5px 25px black; object-fit:cover; flex-shrink:0; background:#1a1a1a; }}
-            .spin-art {{ border-radius:50%; animation: spin 6s linear infinite; }}
-            
-            .meta {{ flex:1; min-width:0; overflow:hidden; }}
-            .lbl {{ font-family:'JetBrains Mono'; font-size:12px; color:var(--acc); letter-spacing:2px; font-weight:800; margin-bottom:5px; }}
-            .track {{ font-size:32px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
-            .det {{ font-size:18px; color:#aaa; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
-            
-            /* Connections Bottom Right */
-            .conns {{ display:flex; gap:18px; margin-left:30px; flex-shrink:0; }}
-            .ci {{ width:28px; height:28px; filter:invert(1); opacity:0.7; transition:0.2s; }} .ci:hover{{ opacity:1; transform:translateY(-3px); }}
-
-            /* Progress Bar */
-            .bar-bg {{ position:absolute; bottom:0; left:0; width:100%; height:6px; background:rgba(255,255,255,0.05); }} 
-            .bar-fil {{ height:100%; background:var(--acc); width:0%; transition:width 1s linear; box-shadow: 0 0 10px var(--acc); }}
+            .conns {{ display:flex; gap:15px; margin-right:15px; }}
+            .c-ic {{ width:28px; filter:invert(1); opacity:0.7; transition:0.2s; }} .c-ic:hover {{ transform:translateY(-3px); opacity:1; }}
         </style>
     </head>
     <body>
-        <div class="ambient"><img id="bgImg" class="ambient-img"></div>
+        <div class="ambient" id="bg"></div>
         <div class="card">
-            <div class="vignette"></div>
-            <div class="plats" id="platRow"></div>
-            
+            <div class="plats" id="pl"></div>
             <div class="header">
-                <div class="av-wrap">
-                    <div class="ring"></div>
-                    <img id="avatar" class="av-img" src="">
-                    <div class="stat-dot"><div class="fill" id="statusInd"></div></div>
-                </div>
-                <div class="info">
-                    <div class="badges" id="badgeRow"></div>
-                    <h1 id="name">...</h1>
-                    <div class="uid">UID: {key}</div>
-                    <div class="bio" id="bio">...</div>
-                </div>
+                <div class="av-wrap"><div class="ring"></div><img id="av" class="av-img" src=""><div class="s-dot"><div class="fill"></div></div></div>
+                <div class="meta"><div class="badges" id="bb"></div><h1 id="nm">...</h1><div class="uid">UID: {d['uid']}</div><div class="bio" id="bio"></div></div>
             </div>
-
             <div class="dock" id="dock">
-                <img id="art" class="art" src="">
-                <div class="meta">
-                    <div class="lbl" id="lbl"></div>
-                    <div class="track" id="tit"></div>
-                    <div class="det" id="det"></div>
-                </div>
-                <div class="conns" id="connRow"></div>
-                <div class="bar-bg"><div class="bar-fil" id="prog"></div></div>
+                <img id="art" class="art"><div class="inf"><div class="lbl" id="lbl"></div><div class="trk" id="tit"></div><div class="det" id="det"></div></div>
+                <div class="conns" id="cc"></div>
+                <div class="bar-base"><div class="bar-prog" id="prog"></div></div>
             </div>
         </div>
-
         <script>
-            const UID = "{key}";
-            // Corrected Platform SVGs (Simple filled paths)
-            const ICONS = {{
-                desktop: '<svg viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v9c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2zm0 2v9h16V6H4zm8 14c-.55 0-1-.45-1-1v-1h2v1c0 .55-.45 1-1 1z"/></svg>',
-                mobile: '<svg viewBox="0 0 24 24"><path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/></svg>',
-                web: '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>'
-            }};
+            const UID = "{d['uid']}";
+            const IC = {{ desktop:'<path d="M4 4h16c1.1 0 2 .9 2 2v9c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2zm0 2v9h16V6H4zm8 14c-.55 0-1-.45-1-1v-1h2v1c0 .55-.45 1-1 1z" fill="currentColor"/>', mobile:'<path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z" fill="currentColor"/>', web:'<path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" fill="currentColor"/>' }};
+            async function upd(){{
+                const r = await fetch(`/api/data/${{UID}}` + location.search);
+                const d = await r.json(); if(!d) return;
+                
+                document.documentElement.style.setProperty('--acc', d.activity.color);
+                document.documentElement.style.setProperty('--stat', d.status_color);
+                document.getElementById('dock').style.borderColor = d.activity.color;
+                
+                document.getElementById('bg').style.backgroundImage = `url(${{d.banner||d.avatar}})`;
+                document.getElementById('av').src = d.avatar;
+                document.getElementById('nm').textContent = d.name;
+                document.getElementById('bio').textContent = d.bio;
+                
+                document.getElementById('bb').innerHTML = d.badges.map(b=>`<img src="${{b}}" class="badge">`).join('');
+                document.getElementById('cc').innerHTML = d.connections.map(c=>`<a href="${{c.link}}" target="_blank"><img src="${{c.src}}" class="ci"></a>`).join('');
+                
+                let ph=''; d.platforms.forEach(p=>{{ if(IC[p]) ph+=`<svg viewBox="0 0 24 24">${{IC[p]}}</svg>` }});
+                document.getElementById('pl').innerHTML = ph;
 
-            async function loop() {{
-                try {{
-                    let r = await fetch(`/api/data/${{UID}}` + window.location.search);
-                    let d = await r.json();
-                    if(!d) return;
+                const a = d.activity;
+                document.getElementById('lbl').textContent = a.header;
+                document.getElementById('tit').textContent = a.title;
+                document.getElementById('det').textContent = a.detail;
+                document.getElementById('art').src = a.image || "https://cdn.discordapp.com/embed/avatars/0.png";
 
-                    // Theme Colors
-                    document.documentElement.style.setProperty('--acc', d.activity.color);
-                    document.documentElement.style.setProperty('--stat', d.status_color);
-                    document.getElementById('dock').style.borderColor = d.activity.color;
-
-                    // Assets
-                    document.getElementById('bgImg').src = d.banner || d.avatar;
-                    document.getElementById('avatar').src = d.avatar;
-                    document.getElementById('name').textContent = d.name;
-                    document.getElementById('bio').textContent = d.bio;
-                    
-                    // Badges
-                    document.getElementById('badgeRow').innerHTML = d.badges.map(u => 
-                        `<img src="${{u}}" class="badge">`).join('');
-                    
-                    // Platforms (Colored Indicator Logic)
-                    let pHTML = '';
-                    d.platforms.forEach(k => {{ 
-                        if(ICONS[k]) pHTML += `<div class="p-icon">${{ICONS[k]}}</div>`; 
-                    }});
-                    document.getElementById('platRow').innerHTML = pHTML;
-
-                    // Activity
-                    const a = d.activity;
-                    document.getElementById('lbl').textContent = a.header;
-                    document.getElementById('tit').textContent = a.title;
-                    document.getElementById('det').textContent = a.detail;
-                    
-                    const img = document.getElementById('art');
-                    img.src = a.image || 'https://cdn.discordapp.com/embed/avatars/0.png';
-                    img.className = a.is_music ? 'art spin-art' : 'art'; // Vinyl Spin effect
-
-                    // Connections
-                    document.getElementById('connRow').innerHTML = d.connections.map(c => 
-                        `<a href="${{c.link}}" target="_blank"><img src="${{c.src}}" class="ci" title="${{c.type}}"></a>`).join('');
-                    
-                    // Progress Bar
-                    if(a.is_music && a.end) {{
-                        const cur = Date.now() - a.start;
-                        const tot = a.end - a.start;
-                        const pct = Math.min(Math.max((cur/tot)*100,0), 100);
-                        document.getElementById('prog').style.width = pct + "%";
-                    }} else {{ document.getElementById('prog').style.width = "0%"; }}
-
-                }} catch(e){{}}
+                if(a.is_music && a.end) {{
+                   let p = ((Date.now() - a.start) / (a.end - a.start))*100;
+                   document.getElementById('prog').style.width = Math.min(Math.max(p,0),100) + "%";
+                }} else {{ document.getElementById('prog').style.width = "0%"; }}
             }}
-            setInterval(loop, 1000);
-            loop();
+            setInterval(upd, 1000); upd();
         </script>
-    </body>
-    </html>
+    </body></html>
     """
 
 # ===========================
-#      CONTROLLERS
+#      CONTROLLER
 # ===========================
-
 @app.route('/api/data/<key>')
-def api(key):
-    data = fetch_data(key, 'user', request.args, for_html=True)
-    return jsonify(data)
+def api(key): return jsonify(fetch_data(key, 'user', request.args, for_html=True))
 
 @app.route('/superbadge/<key>')
 def handler(key):
     args = request.args
-    # HTML Mode (Live Web View)
-    if args.get('mode') == 'html': return render_live_html(key)
-    
-    # SVG Mode (GitHub Badge)
-    type_mode = 'user' if (key.isdigit() and len(str(key)) > 15) else 'discord'
+    if args.get('mode') == 'html': 
+        d = fetch_data(key, 'user', args, for_html=True)
+        return render_live_html(d)
+
+    type_mode = 'user' if (key.isdigit() and len(str(key))>15) else 'discord'
     data = fetch_data(key, type_mode, args, for_html=False)
     
     if not data: return Response('<svg><text>Error</text></svg>', mimetype="image/svg+xml")
@@ -455,7 +427,7 @@ def handler(key):
     if data['type'] == 'discord':
          svg = f'<svg width="400" height="100" xmlns="http://www.w3.org/2000/svg"><defs><style>{css}</style></defs><rect width="100%" height="100%" rx="{radius}" fill="#{bg_col}"/><image href="{data["avatar"]}" width="60" height="60" x="20" y="20"/><text x="100" y="55" fill="white" font-family="sans-serif" font-size="20">{data["name"]}</text><text x="100" y="70" font-family="monospace" fill="#5865F2">{data["title"]}</text></svg>'
     else:
-         svg = render_svg(data, css, radius, bg_col)
+         svg = render_mega_svg(data, css, radius, bg_col)
     
     return Response(svg, mimetype="image/svg+xml", headers={"Cache-Control": "no-cache, max-age=0"})
 
